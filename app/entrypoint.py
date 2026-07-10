@@ -30,7 +30,10 @@ from video import extract_frames_b64  # noqa: E402
 INPUT_PATH = os.environ.get("INPUT_PATH", "/input/tasks.json")
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/output/results.json")
 TOTAL_BUDGET = float(os.environ.get("TOTAL_BUDGET_SECONDS", "540"))  # 9 min
-MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "3"))
+# Cap concurrency so parallel Scout calls don't blow Groq's ~30k TPM.
+MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "2"))
+# Stagger task starts so vision calls don't land in the same TPM window.
+STAGGER_SECONDS = float(os.environ.get("STAGGER_SECONDS", "1.5"))
 
 START = time.time()
 _write_lock = threading.Lock()
@@ -127,8 +130,11 @@ def main() -> None:
     if tasks:
         try:
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-                futs = [pool.submit(process_task, t, order, results)
-                        for t in tasks]
+                futs = []
+                for i, t in enumerate(tasks):
+                    if i > 0 and STAGGER_SECONDS > 0:
+                        time.sleep(STAGGER_SECONDS)
+                    futs.append(pool.submit(process_task, t, order, results))
                 for _ in as_completed(futs):
                     pass
         except Exception:  # noqa: BLE001
