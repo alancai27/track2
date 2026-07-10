@@ -1,6 +1,6 @@
 # amd_track2 — Video Captioning Agent (AMD Hackathon ACT II, Track 2)
 
-Pipeline per clip: download → ffmpeg extracts 6 downsized (512px) frames →
+Pipeline per clip: download → ffmpeg extracts 4 downsized (512px) frames →
 **Groq Llama 4 Scout** writes one rich factual description → **Llama 3.3 70B**
 styles it into 4 captions (formal / sarcastic / humorous_tech /
 humorous_non_tech) in a single strict-JSON call.

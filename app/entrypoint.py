@@ -10,7 +10,7 @@ Guarantees (Track 1 lessons baked in):
   * Wall-clock budget: stop launching heavy work near the deadline.
   * ALWAYS exits 0.
 
-Pipeline per clip: download -> ffmpeg 6 downsized frames -> Groq VLM
+Pipeline per clip: download -> ffmpeg 4 downsized frames -> Groq VLM
 factual description -> Groq text model styles 4 captions.
 """
 import json

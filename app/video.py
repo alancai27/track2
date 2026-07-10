@@ -1,9 +1,9 @@
 """Download clip + extract N evenly-spaced downsized frames as base64 JPEGs.
 
-Design (per plan): 6 frames, 512px wide, JPEG q4. VLMs take images not video;
-downsizing keeps perception fast and under the 30-image/request limit.
-Every step has a fallback; on total failure returns [] and the caller
-degrades gracefully.
+Design: 4 frames, 512px wide, JPEG q4. VLMs take images not video;
+Groq Llama 4 Scout caps at 5 images/request — 4 leaves margin.
+Downsizing keeps perception fast. Every step has a fallback; on total
+failure returns [] and the caller degrades gracefully.
 """
 import base64
 import os
@@ -12,7 +12,7 @@ import tempfile
 
 import requests
 
-N_FRAMES = int(os.environ.get("N_FRAMES", "6"))
+N_FRAMES = int(os.environ.get("N_FRAMES", "4"))
 FRAME_WIDTH = int(os.environ.get("FRAME_WIDTH", "512"))
 DOWNLOAD_TIMEOUT = float(os.environ.get("DOWNLOAD_TIMEOUT", "60"))
 

@@ -41,7 +41,7 @@ def describe(frames_b64: list[str]) -> str:
     """Return factual description; raises only if every model fails."""
     global _working_model
     content = [{"type": "text", "text": PROMPT}]
-    for b64 in frames_b64[:12]:  # hard cap, well under 30-image limit
+    for b64 in frames_b64[:5]:  # Groq Scout hard-caps at 5 images/request
         content.append({
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
