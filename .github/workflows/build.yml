@@ -37,3 +37,34 @@ jobs:
         run: |
           docker buildx imagetools inspect ghcr.io/alancai27/amd_track2:latest | tee manifest.txt
           grep -q "linux/amd64" manifest.txt
+
+      - name: Smoke-test on 3 example clips
+        timeout-minutes: 15
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p io/input io/output
+          cat > io/input/tasks.json <<'EOF'
+          [
+            {"task_id":"v1","video_url":"https://storage.googleapis.com/amd-hackathon-clips/1860079-uhd_2560_1440_25fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]},
+            {"task_id":"v2","video_url":"https://storage.googleapis.com/amd-hackathon-clips/13825391-uhd_3840_2160_30fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]},
+            {"task_id":"v3","video_url":"https://storage.googleapis.com/amd-hackathon-clips/3044693-uhd_3840_2160_24fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]}
+          ]
+          EOF
+
+          docker pull ghcr.io/alancai27/amd_track2:latest
+
+          echo "---- container logs ----"
+          docker run --rm \
+            -e GROQ_API_KEY="${GROQ_API_KEY}" \
+            -e INPUT_PATH=/input/tasks.json \
+            -e OUTPUT_PATH=/output/results.json \
+            -v "${{ github.workspace }}/io/input:/input" \
+            -v "${{ github.workspace }}/io/output:/output" \
+            ghcr.io/alancai27/amd_track2:latest \
+            2>&1 | tee smoke.log
+
+          echo "---- results ----"
+          cat io/output/results.json
+          echo
