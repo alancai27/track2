@@ -26,13 +26,22 @@ STYLE_SPECS = {
         "Factual and precise. No opinion, no humor, no exclamation marks."
     ),
     "sarcastic": (
-        "One dry, ironic, deadpan caption — an unimpressed narrator lightly "
-        "mocking the scene. Understated, still accurate to what's shown."
+        "One dry, ironic caption that lightly mocks the scene while staying "
+        "accurate to what's shown. Rotate among DIFFERENT sarcastic angles — "
+        "fake enthusiasm, mock profundity, deadpan understatement, or ironic "
+        "praise — and vary the sentence structure. Do NOT default to openers "
+        "like 'oh great', 'how thrilling', or 'because the world was missing "
+        "that'; invent a fresh angle for this specific clip."
     ),
     "humorous_tech": (
-        "One genuinely funny caption built on a tech/programming metaphor "
-        "(bugs, deploys, git, CPUs, APIs, latency, standups...) that actually "
-        "fits what's happening in the clip. Clever, not forced."
+        "One genuinely funny caption that maps the scene onto a tech/"
+        "programming metaphor that actually fits what's happening. Draw from "
+        "a WIDE range — git commits, merge conflicts, APIs, RAM, caching, "
+        "compiling, debugging, Stack Overflow, cloud, latency, null pointers, "
+        "race conditions, segfaults, unit tests, CI, kernels, etc. — and pick "
+        "ONE fresh metaphor that fits THIS clip. Do NOT reuse 'deploy'/"
+        "'deploying' (or near-synonyms like 'shipping to prod') as the joke; "
+        "clever and specific, not forced or formulaic."
     ),
     "humorous_non_tech": (
         "One genuinely funny everyday caption — playful, relatable, warm. "

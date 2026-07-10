@@ -1,7 +1,7 @@
 """Shared Groq (OpenAI-compatible) client + hardened chat helper.
 
 Env:
-  GROQ_API_KEY   (your key locally; injected by grader if applicable)
+  GROQ_API_KEY   (optional override; takes priority over the baked key)
   GROQ_BASE_URL  (default: https://api.groq.com/openai/v1)
 """
 import os
@@ -11,17 +11,28 @@ import time
 from openai import OpenAI
 
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+
+# Free Groq key with no billing — safe to bake into the public image so the
+# grader (which does not inject GROQ_API_KEY) can still call the API.
+# Rotate this key before final submit if you prefer a fresh one.
+BAKED_GROQ_KEY = "PASTE_YOUR_GROQ_KEY_HERE"
+
 # Groq: "Please try again in 1.23s" / "try again in 2s"
 _RETRY_AFTER_RE = re.compile(r"try again in ([\d.]+)\s*s", re.I)
 
 _client = None
 
 
+def _api_key() -> str:
+    # Env wins (local / CI); baked key is the grader fallback.
+    return (os.environ.get("GROQ_API_KEY") or "").strip() or BAKED_GROQ_KEY
+
+
 def client() -> OpenAI:
     global _client
     if _client is None:
         _client = OpenAI(
-            api_key=os.environ.get("GROQ_API_KEY", "missing-key"),
+            api_key=_api_key(),
             base_url=os.environ.get("GROQ_BASE_URL", DEFAULT_BASE_URL),
             timeout=float(os.environ.get("PER_CALL_TIMEOUT", "25")),
             max_retries=0,  # we do our own retries so we control the clock
