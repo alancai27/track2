@@ -1,7 +1,8 @@
 """Shared Groq (OpenAI-compatible) client + hardened chat helper.
 
 Env:
-  GROQ_API_KEY   (optional override; takes priority over the baked key)
+  GROQ_API_KEY   (required; set locally via .env, or baked into the image
+                  at build time via Dockerfile ARG/ENV — never committed)
   GROQ_BASE_URL  (default: https://api.groq.com/openai/v1)
 """
 import os
@@ -12,20 +13,21 @@ from openai import OpenAI
 
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 
-# Free Groq key with no billing — safe to bake into the public image so the
-# grader (which does not inject GROQ_API_KEY) can still call the API.
-# Rotate this key before final submit if you prefer a fresh one.
-BAKED_GROQ_KEY = "PASTE_YOUR_GROQ_KEY_HERE"
-
-# Groq: "Please try again in 1.23s" / "try again in 2s"
-_RETRY_AFTER_RE = re.compile(r"try again in ([\d.]+)\s*s", re.I)
+# Groq: "Please try again in 1.23s" / "try again in 500ms"
+_RETRY_AFTER_RE = re.compile(
+    r"try again in\s+([\d.]+)\s*(ms|s|m)?", re.I
+)
 
 _client = None
 
 
 def _api_key() -> str:
-    # Env wins (local / CI); baked key is the grader fallback.
-    return (os.environ.get("GROQ_API_KEY") or "").strip() or BAKED_GROQ_KEY
+    return (os.environ.get("GROQ_API_KEY") or "").strip() or "missing-key"
+
+
+def key_source() -> str:
+    """'set' or 'missing' — for startup diagnostics (never prints the key)."""
+    return "set" if (os.environ.get("GROQ_API_KEY") or "").strip() else "missing"
 
 
 def client() -> OpenAI:
@@ -34,32 +36,52 @@ def client() -> OpenAI:
         _client = OpenAI(
             api_key=_api_key(),
             base_url=os.environ.get("GROQ_BASE_URL", DEFAULT_BASE_URL),
-            timeout=float(os.environ.get("PER_CALL_TIMEOUT", "25")),
+            timeout=float(os.environ.get("PER_CALL_TIMEOUT", "45")),
             max_retries=0,  # we do our own retries so we control the clock
         )
     return _client
 
 
-def _rate_limit_wait(err: Exception) -> float | None:
-    """Seconds to sleep on 429, or None if not a rate-limit error."""
+def _is_rate_limit(err: Exception) -> bool:
     msg = str(err)
     low = msg.lower()
-    if "429" not in msg and "rate limit" not in low and "rate_limit" not in low:
-        return None
-    m = _RETRY_AFTER_RE.search(msg)
+    return (
+        "429" in msg
+        or "rate limit" in low
+        or "rate_limit" in low
+        or "tokens per minute" in low
+        or "tpm" in low
+    )
+
+
+def _rate_limit_wait(err: Exception, attempt: int) -> float:
+    """Seconds to sleep on 429. Prefer Groq's hint; else exponential backoff."""
+    m = _RETRY_AFTER_RE.search(str(err))
     if m:
-        return float(m.group(1)) + 0.35  # small cushion past the window
-    return 2.0
+        val = float(m.group(1))
+        unit = (m.group(2) or "s").lower()
+        if unit == "ms":
+            wait = val / 1000.0
+        elif unit == "m":
+            wait = val * 60.0
+        else:
+            wait = val
+        wait = wait + 0.75  # cushion past the window
+    else:
+        # 2, 4, 8, 16, 20, 20...
+        wait = min(2.0 * (2 ** attempt), 20.0)
+    return max(1.0, min(wait, 45.0))
 
 
 def chat(model: str, messages: list, max_tokens: int = 400,
          temperature: float = 0.6, response_format: dict | None = None,
-         retries: int = 1, rate_limit_retries: int = 3) -> str:
+         retries: int = 1, rate_limit_retries: int = 10) -> str:
     """Call chat.completions.
 
     On 429: parse Groq's "try again in Xs", sleep, retry (up to
-    rate_limit_retries). On 400: retry once WITHOUT optional params
-    (Track 1 lesson). Raises on final failure — caller decides fallback.
+    rate_limit_retries — default 10, enough for a 12-clip TPM grind).
+    On 400: retry once WITHOUT optional params (Track 1 lesson).
+    Raises on final failure — caller decides fallback.
     """
     kwargs = dict(model=model, messages=messages,
                   max_tokens=max_tokens, temperature=temperature)
@@ -69,6 +91,7 @@ def chat(model: str, messages: list, max_tokens: int = 400,
     last_err = None
     soft_left = retries
     rate_left = rate_limit_retries
+    rate_attempt = 0
 
     while True:
         try:
@@ -84,9 +107,10 @@ def chat(model: str, messages: list, max_tokens: int = 400,
             continue
         except Exception as e:  # noqa: BLE001
             last_err = e
-            wait = _rate_limit_wait(e)
-            if wait is not None and rate_left > 0:
+            if _is_rate_limit(e) and rate_left > 0:
+                wait = _rate_limit_wait(e, rate_attempt)
                 rate_left -= 1
+                rate_attempt += 1
                 print(f"[llm] 429 on {model}; sleep {wait:.1f}s "
                       f"({rate_left} rate-retries left)", flush=True)
                 time.sleep(wait)

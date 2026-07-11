@@ -1,23 +1,25 @@
 # amd_track2 — Video Captioning Agent (AMD Hackathon ACT II, Track 2)
 
-Pipeline per clip: download → ffmpeg extracts 4 downsized (384px) frames →
+Pipeline per clip: download → ffmpeg extracts 3 tiny (256px) frames →
 **Groq Llama 4 Scout** writes one rich factual description → **Llama 3.3 70B**
 styles it into 4 captions (formal / sarcastic / humorous_tech /
 humorous_non_tech) in a single strict-JSON call.
 
 ## Layout
 - `app/entrypoint.py` — orchestrator: seeds valid fallback output at t≈0,
-  incremental atomic rewrites, 2-worker pool (TPM-safe) + staggered submits,
-  wall-clock budget (9 min soft), always exits 0.
+  incremental atomic rewrites, 1-worker pool (TPM-safe) + staggered submits,
+  wall-clock budget (~9.3 min soft), perception REAL/FALLBACK summary,
+  always exits 0.
 - `app/video.py` — download (falls back to ffmpeg streaming the URL directly),
-  ffprobe duration, evenly-spaced frame grabs, base64 JPEGs.
+  ffprobe duration, evenly-spaced frame grabs, base64 JPEGs (3×256px default).
 - `app/perception.py` — vision model ladder: `VISION_MODEL` env →
   `meta-llama/llama-4-scout-17b-16e-instruct`. First working model is cached.
 - `app/styling.py` — text ladder: `STYLE_MODEL` env → `llama-3.3-70b-versatile`
   → `llama-3.1-8b-instant`. One JSON call for all 4 styles; per-style rescue
   calls if JSON is mangled; grounded template fallbacks if everything dies.
-- `app/llm.py` — shared OpenAI-compat Groq client; on 400, retries once without
-  optional params (Track 1 lesson).
+- `app/llm.py` — shared OpenAI-compat Groq client; reads `GROQ_API_KEY` from
+  env only (image gets it via Dockerfile ARG/ENV at CI build time); 429
+  retries (parse "try again in Xs", up to 10) + 400 bare retry.
 
 ## Local dev
 ```

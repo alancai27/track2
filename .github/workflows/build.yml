@@ -29,6 +29,8 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          build-args: |
+            GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
           tags: |
             ghcr.io/alancai27/amd_track2:latest
             ghcr.io/alancai27/amd_track2:${{ github.sha }}
@@ -38,20 +40,33 @@ jobs:
           docker buildx imagetools inspect ghcr.io/alancai27/amd_track2:latest | tee manifest.txt
           grep -q "linux/amd64" manifest.txt
 
-      - name: Smoke-test on 3 example clips
-        timeout-minutes: 15
+      - name: Smoke-test on 12 clips (3 examples x 4)
+        timeout-minutes: 20
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           set -euo pipefail
           mkdir -p io/input io/output
-          cat > io/input/tasks.json <<'EOF'
-          [
-            {"task_id":"v1","video_url":"https://storage.googleapis.com/amd-hackathon-clips/1860079-uhd_2560_1440_25fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]},
-            {"task_id":"v2","video_url":"https://storage.googleapis.com/amd-hackathon-clips/13825391-uhd_3840_2160_30fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]},
-            {"task_id":"v3","video_url":"https://storage.googleapis.com/amd-hackathon-clips/3044693-uhd_3840_2160_24fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]}
+          # 12 tasks = grading-set load; unique task_ids, same 3 URLs repeated.
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          urls = [
+            "https://storage.googleapis.com/amd-hackathon-clips/1860079-uhd_2560_1440_25fps.mp4",
+            "https://storage.googleapis.com/amd-hackathon-clips/13825391-uhd_3840_2160_30fps.mp4",
+            "https://storage.googleapis.com/amd-hackathon-clips/3044693-uhd_3840_2160_24fps.mp4",
           ]
-          EOF
+          styles = ["formal", "sarcastic", "humorous_tech", "humorous_non_tech"]
+          tasks = []
+          for i in range(12):
+            tasks.append({
+              "task_id": f"v{i+1}",
+              "video_url": urls[i % 3],
+              "styles": styles,
+            })
+          Path("io/input/tasks.json").write_text(json.dumps(tasks, indent=2))
+          print(f"wrote {len(tasks)} tasks")
+          PY
 
           docker pull ghcr.io/alancai27/amd_track2:latest
 
@@ -68,3 +83,22 @@ jobs:
           echo "---- results ----"
           cat io/output/results.json
           echo
+
+          echo "---- perception summary ----"
+          grep -E '\[main\].*real perception|GROQ key=|perception=' smoke.log || true
+
+          # Fail the job if most clips fell back (score would be ~0).
+          python3 - <<'PY'
+          import re, sys
+          log = open("smoke.log").read()
+          m = re.search(r"(\d+)/(\d+) clips got real perception", log)
+          if not m:
+              print("WARNING: no perception summary line found")
+              sys.exit(0)
+          real, total = int(m.group(1)), int(m.group(2))
+          print(f"parsed: {real}/{total} real perception")
+          if real < max(1, total // 2):
+              print(f"FAIL: only {real}/{total} got real perception "
+                    f"(likely 429s or bad key)")
+              sys.exit(1)
+          PY
