@@ -1,12 +1,9 @@
-"""Perception: frames -> verified FACTUAL description via Fireworks minimax-m3.
+"""Perception: frames (+ optional audio transcript) -> verified description.
 
 Flow:
-  1. Draft description from frames.
-  2. Verification pass: same frames + draft → corrected description.
-Captions are written from the verified description only.
-
-minimax-m3 is a reasoning model — llm.chat sends reasoning_effort=none.
-Fireworks VLM image cap is 30/request; we use 3–6 frames dynamically.
+  1. Draft description from keyframes (+ transcript if present).
+  2. Verification pass against the same frames.
+Uses Fireworks minimax-m3 with reasoning_effort=none (via llm.chat).
 """
 import os
 import threading
@@ -18,7 +15,7 @@ CANDIDATES = [
 ]
 
 PROMPT = (
-    "These are evenly spaced frames from one short video clip, in order. "
+    "These are keyframes from one short video clip, in temporal order. "
     "Write a concise FACTUAL description in 3-5 sentences covering: "
     "setting, main subjects (appearance/colors), actions and how the scene "
     "progresses, notable objects, and lighting/weather. Be specific but "
@@ -27,12 +24,24 @@ PROMPT = (
     "landmarks, brand names, or identity labels that are not clearly visible."
 )
 
+TRANSCRIPT_ADDENDUM = (
+    "\n\nAudio transcript from the clip (may be incomplete or noisy):\n"
+    "\"{transcript}\"\n"
+    "If the transcript contains clearly relevant speech or sounds described "
+    "as words, weave that into the factual description. Do NOT invent "
+    "dialogue that is not in the transcript. If the transcript is empty or "
+    "gibberish, ignore it."
+)
+
 VERIFY_PROMPT = (
     "You are verifying a draft description of this video against the frames.\n"
     "Draft description:\n{draft}\n\n"
-    "Compare the draft to what is ACTUALLY visible in these frames. "
+    "{transcript_block}"
+    "Compare the draft to what is ACTUALLY visible in these frames"
+    "{audio_note}. "
     "Rewrite a corrected FACTUAL description in 3-5 sentences that:\n"
-    "- Keeps only details supported by the frames\n"
+    "- Keeps only details supported by the frames"
+    "{audio_keep}\n"
     "- Removes or fixes any hallucinations, guesses, or invented specifics "
     "(wrong objects, actions, locations, brands, identities)\n"
     "- Adds any clearly visible important detail the draft missed\n"
@@ -54,9 +63,9 @@ def _candidate_models() -> list[str]:
 
 
 def _frame_messages(prompt_text: str, frames_b64: list[str]) -> list[dict]:
-    # Fireworks VLM: up to 30 images; we send at most 6.
+    # Cap at 8 to match MAX_FRAMES; Fireworks allows up to 30.
     content: list[dict] = [{"type": "text", "text": prompt_text}]
-    for b64 in frames_b64[:6]:
+    for b64 in frames_b64[:8]:
         content.append({
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
@@ -65,7 +74,6 @@ def _frame_messages(prompt_text: str, frames_b64: list[str]) -> list[dict]:
 
 
 def _call_vision(messages: list[dict], max_tokens: int) -> str:
-    """Try model ladder; cache first success. Raises if all fail."""
     global _working_model
     with _lock:
         models = ([_working_model] if _working_model else []) + \
@@ -84,9 +92,35 @@ def _call_vision(messages: list[dict], max_tokens: int) -> str:
     raise last_err or RuntimeError("no vision model available")
 
 
-def _verify(frames_b64: list[str], draft: str) -> str:
-    """Second vision pass: correct hallucinations against the same frames."""
-    messages = _frame_messages(VERIFY_PROMPT.format(draft=draft), frames_b64)
+def _draft_prompt(transcript: str) -> str:
+    prompt = PROMPT
+    t = (transcript or "").strip()
+    if t:
+        prompt += TRANSCRIPT_ADDENDUM.format(transcript=t[:1500])
+    return prompt
+
+
+def _verify(frames_b64: list[str], draft: str, transcript: str) -> str:
+    t = (transcript or "").strip()
+    if t:
+        t_block = (
+            f"Audio transcript (for speech-only facts):\n\"{t[:1500]}\"\n\n"
+        )
+        audio_note = " and spoken content supported by the transcript"
+        audio_keep = " or clearly supported by the transcript"
+    else:
+        t_block = ""
+        audio_note = ""
+        audio_keep = ""
+    messages = _frame_messages(
+        VERIFY_PROMPT.format(
+            draft=draft,
+            transcript_block=t_block,
+            audio_note=audio_note,
+            audio_keep=audio_keep,
+        ),
+        frames_b64,
+    )
     try:
         corrected = _call_vision(messages, max_tokens=280)
         if corrected.strip():
@@ -97,8 +131,11 @@ def _verify(frames_b64: list[str], draft: str) -> str:
     return draft
 
 
-def describe(frames_b64: list[str]) -> str:
+def describe(frames_b64: list[str], transcript: str = "") -> str:
     """Return verified factual description; raises only if draft call fails."""
-    draft = _call_vision(_frame_messages(PROMPT, frames_b64), max_tokens=280)
+    draft = _call_vision(
+        _frame_messages(_draft_prompt(transcript), frames_b64),
+        max_tokens=280,
+    )
     print(f"[perception] draft ok via {_working_model}", flush=True)
-    return _verify(frames_b64, draft)
+    return _verify(frames_b64, draft, transcript)

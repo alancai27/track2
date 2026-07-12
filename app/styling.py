@@ -62,18 +62,21 @@ STYLE_SPECS = {
         "compiling, debugging, Stack Overflow, cloud, latency, null pointers, "
         "race conditions, segfaults, unit tests, CI, kernels…). "
         "Do NOT use deploy/deploying/shipping-to-prod as the joke. "
-        "The humor must be grounded in what is ACTUALLY visible in the video. "
-        "You may be funny about the real subjects/actions/setting, but do NOT "
-        "invent objects, scenarios, or events that aren't in the description. "
-        "Every caption must remain accurate to the actual clip content."
+        "Be witty and creative with the metaphor — git/cache/RAM/etc. do NOT "
+        "need to be visible in the clip. What MUST stay accurate is the "
+        "real subject/action/setting the metaphor is mapped onto: describe "
+        "what is actually happening, then land a clever tech joke about it. "
+        "Do not invent people, objects, or events that aren't in the "
+        "description."
     ),
     "humorous_non_tech": (
         "Genuinely funny everyday caption — playful, relatable, warm. "
         "Absolutely NO tech or programming references or jargon. "
-        "The humor must be grounded in what is ACTUALLY visible in the video. "
-        "You may be funny about the real subjects/actions/setting, but do NOT "
-        "invent objects, scenarios, or events that aren't in the description. "
-        "Every caption must remain accurate to the actual clip content."
+        "ACCURACY FIRST: the joke MUST riff on details actually visible in "
+        "the clip (real subjects, actions, setting, objects from the "
+        "description). Stay funny, but do NOT invent objects, people, "
+        "scenarios, or events that aren't in the description. Every clause "
+        "must remain factually true to the clip."
     ),
 }
 

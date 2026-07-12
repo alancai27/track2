@@ -1,22 +1,23 @@
-"""Download clip + extract N evenly-spaced downsized frames as base64 JPEGs.
+"""Download clip + extract scene-change keyframes as base64 JPEGs.
 
-Fireworks VLMs allow up to 30 images/request; we use 3–6 dynamically
-(like the 92% competitor) at 256px JPEG q4. Serial workers + stagger
-keep rate limits happy. Every step has a fallback; on total failure
-returns [] and the caller degrades gracefully.
+Primary: ffmpeg scene detection (select='gt(scene,0.3)') for visually
+distinct frames. Fallback: evenly spaced if scene detect yields <3.
+Cap at 8 frames (Fireworks VLM allows 30). Frames scaled to FRAME_WIDTH.
 """
 import base64
+import glob
 import os
 import subprocess
 import tempfile
+from contextlib import contextmanager
 
 import requests
 
-# Override forces a fixed count; otherwise duration picks 3–6.
-_N_FRAMES_OVERRIDE = os.environ.get("N_FRAMES")
 FRAME_WIDTH = int(os.environ.get("FRAME_WIDTH", "256"))
 DOWNLOAD_TIMEOUT = float(os.environ.get("DOWNLOAD_TIMEOUT", "60"))
-MAX_FRAMES = 6  # well under Fireworks' 30-image VLM cap
+MAX_FRAMES = int(os.environ.get("MAX_FRAMES", "8"))
+SCENE_THRESHOLD = float(os.environ.get("SCENE_THRESHOLD", "0.3"))
+MIN_SCENE_FRAMES = 3
 
 
 def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
@@ -46,20 +47,6 @@ def _duration(path_or_url: str) -> float | None:
         return None
 
 
-def _n_frames(dur: float | None) -> int:
-    if _N_FRAMES_OVERRIDE:
-        return max(1, min(int(_N_FRAMES_OVERRIDE), MAX_FRAMES))
-    if not dur or dur <= 0:
-        return 4
-    if dur < 30:
-        return 3
-    if dur < 60:
-        return 4
-    if dur < 90:
-        return 5
-    return 6
-
-
 def _extract_at(src: str, ts: float, out_path: str) -> bool:
     try:
         p = _run(["ffmpeg", "-y", "-ss", f"{ts:.2f}", "-i", src,
@@ -72,33 +59,110 @@ def _extract_at(src: str, ts: float, out_path: str) -> bool:
         return False
 
 
-def extract_frames_b64(url: str) -> list[str]:
-    """Return list of base64-encoded JPEG frames (may be empty)."""
+def _read_jpegs(paths: list[str]) -> list[str]:
+    out = []
+    for path in paths:
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            if data:
+                out.append(base64.b64encode(data).decode())
+        except OSError:
+            continue
+    return out
+
+
+def _subsample(paths: list[str], n: int) -> list[str]:
+    if len(paths) <= n:
+        return paths
+    if n == 1:
+        return [paths[len(paths) // 2]]
+    idxs = [round(i * (len(paths) - 1) / (n - 1)) for i in range(n)]
+    return [paths[i] for i in idxs]
+
+
+def _scene_frame_paths(src: str, out_dir: str) -> list[str]:
+    """Extract scene-change frames; return sorted JPEG paths."""
+    pattern = os.path.join(out_dir, "scene_%04d.jpg")
+    try:
+        _run([
+            "ffmpeg", "-y", "-i", src,
+            "-vf", f"select='gt(scene,{SCENE_THRESHOLD})',"
+                   f"scale={FRAME_WIDTH}:-2",
+            "-vsync", "vfr",
+            "-q:v", "4",
+            pattern,
+        ], timeout=90)
+    except Exception as e:  # noqa: BLE001
+        print(f"[video] scene detect failed: {e}", flush=True)
+        return []
+    paths = sorted(glob.glob(os.path.join(out_dir, "scene_*.jpg")))
+    return [p for p in paths if os.path.getsize(p) > 0]
+
+
+def _even_frame_paths(src: str, out_dir: str, n: int,
+                      dur: float | None) -> list[str]:
+    if dur and dur > 0:
+        stamps = [dur * (i + 0.5) / n for i in range(n)]
+    else:
+        stamps = [1, 4, 8, 12, 18, 25, 35, 45][:n]
+    paths = []
+    for i, ts in enumerate(stamps):
+        out = os.path.join(out_dir, f"even_{i:04d}.jpg")
+        if _extract_at(src, ts, out):
+            paths.append(out)
+    if not paths:
+        out = os.path.join(out_dir, "even_0000.jpg")
+        if _extract_at(src, 0.0, out):
+            paths.append(out)
+    return paths
+
+
+def _keyframe_paths(src: str, work: str) -> tuple[list[str], str]:
+    """Return (jpeg paths, method label). Prefer scene; else even spacing."""
+    scene_dir = os.path.join(work, "scene")
+    os.makedirs(scene_dir, exist_ok=True)
+    scene = _scene_frame_paths(src, scene_dir)
+    if len(scene) >= MIN_SCENE_FRAMES:
+        picked = _subsample(scene, MAX_FRAMES)
+        return picked, f"scene({len(scene)}->{len(picked)})"
+
+    even_dir = os.path.join(work, "even")
+    os.makedirs(even_dir, exist_ok=True)
+    dur = _duration(src)
+    n = MAX_FRAMES
+    even = _even_frame_paths(src, even_dir, n, dur)
+    return even, f"even({len(even)})"
+
+
+@contextmanager
+def open_clip(url: str):
+    """Download once; yield (frames_b64, local_video_path)."""
     with tempfile.TemporaryDirectory() as tmp:
         vid = os.path.join(tmp, "clip.mp4")
-        src = vid if _download(url, vid) else url  # fallback: ffmpeg reads URL
+        src = vid if _download(url, vid) else url
+        if src == url:
+            # Still try to materialize a local copy for ASR when stream works.
+            try:
+                _run(["ffmpeg", "-y", "-i", url, "-c", "copy",
+                      "-t", "180", vid], timeout=90)
+                if os.path.exists(vid) and os.path.getsize(vid) > 0:
+                    src = vid
+            except Exception:  # noqa: BLE001
+                pass
 
+        work = os.path.join(tmp, "frames")
+        os.makedirs(work, exist_ok=True)
+        paths, method = _keyframe_paths(src, work)
+        frames = _read_jpegs(paths)
         dur = _duration(src)
-        n = _n_frames(dur)
-        if dur and dur > 0:
-            stamps = [dur * (i + 0.5) / n for i in range(n)]
-        else:
-            stamps = [1, 5, 10, 20, 40, 70][:n]
+        dur_s = f" dur={dur:.1f}s" if dur else ""
+        print(f"[video] extracted {len(frames)} frames via {method}{dur_s}",
+              flush=True)
+        yield frames, (src if os.path.isfile(src) else "")
 
-        frames = []
-        for i, ts in enumerate(stamps):
-            out = os.path.join(tmp, f"f{i}.jpg")
-            if _extract_at(src, ts, out):
-                with open(out, "rb") as f:
-                    frames.append(base64.b64encode(f.read()).decode())
-        if not frames:
-            out = os.path.join(tmp, "f0.jpg")
-            if _extract_at(src, 0.0, out):
-                with open(out, "rb") as f:
-                    frames.append(base64.b64encode(f.read()).decode())
-        if dur:
-            print(f"[video] extracted {len(frames)}/{n} frames "
-                  f"(dur={dur:.1f}s)", flush=True)
-        else:
-            print(f"[video] extracted {len(frames)}/{n} frames", flush=True)
-        return frames
+
+def extract_frames_b64(url: str) -> list[str]:
+    """Back-compat: keyframes only (no shared download for ASR)."""
+    with open_clip(url) as (frames, _vid):
+        return list(frames)

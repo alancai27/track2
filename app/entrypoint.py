@@ -10,8 +10,9 @@ Guarantees (Track 1 lessons baked in):
   * Wall-clock budget: stop launching heavy work near the deadline.
   * ALWAYS exits 0.
 
-Pipeline per clip: download -> ffmpeg 3–6 frames @ 256px -> Fireworks
-minimax-m3 (draft+verify) -> kimi-k2p6 sequential styled captions.
+Pipeline per clip: download -> scene-change keyframes (≤8) + optional
+ASR (faster-whisper tiny) -> Fireworks minimax-m3 draft+verify ->
+kimi-k2p6 sequential styled captions.
 
 TPM/TPD-safe defaults for a 12-clip grading set: 1 worker, staggered
 submits, compact vision payloads, aggressive 429 retries.
@@ -29,7 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from llm import key_source, token_usage  # noqa: E402
 from perception import describe  # noqa: E402
 from styling import STYLES, style_captions, template_fallbacks  # noqa: E402
-from video import extract_frames_b64  # noqa: E402
+from transcribe import transcribe_audio  # noqa: E402
+from video import open_clip  # noqa: E402
 
 INPUT_PATH = os.environ.get("INPUT_PATH", "/input/tasks.json")
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/output/results.json")
@@ -124,15 +126,19 @@ def process_task(task: dict, order: list[str], results: dict) -> None:
             return  # fallback captions already in place
 
         frames = []
+        transcript = ""
         try:
-            frames = extract_frames_b64(task["video_url"])
+            with open_clip(task["video_url"]) as (frames, vid_path):
+                frames = list(frames)
+                if vid_path and time_left() > 40:
+                    transcript = transcribe_audio(vid_path)
         except Exception as e:  # noqa: BLE001
-            print(f"[{tid}] frame extraction crashed: {e}", flush=True)
+            print(f"[{tid}] frame/asr extraction crashed: {e}", flush=True)
 
         description = ""
         if frames and time_left() > 25:
             try:
-                description = describe(frames)
+                description = describe(frames, transcript=transcript)
                 if description.strip():
                     got_real = True
                     print(f"[{tid}] description: {description[:120]}...",
