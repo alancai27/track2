@@ -1,6 +1,6 @@
 # amd_track2 — Video Captioning Agent (AMD Hackathon ACT II, Track 2)
 
-Pipeline per clip: download → ffmpeg extracts 3 tiny (256px) frames →
+Pipeline per clip: download → ffmpeg extracts 5 frames (384px) →
 **Groq Llama 4 Scout** writes one rich factual description → **Llama 3.3 70B**
 styles it into 4 captions (formal / sarcastic / humorous_tech /
 humorous_non_tech) in a single strict-JSON call.
@@ -11,7 +11,7 @@ humorous_non_tech) in a single strict-JSON call.
   wall-clock budget (~9.3 min soft), perception REAL/FALLBACK summary,
   always exits 0.
 - `app/video.py` — download (falls back to ffmpeg streaming the URL directly),
-  ffprobe duration, evenly-spaced frame grabs, base64 JPEGs (3×256px default).
+  ffprobe duration, evenly-spaced frame grabs, base64 JPEGs (5×384px default).
 - `app/perception.py` — vision model ladder: `VISION_MODEL` env →
   `meta-llama/llama-4-scout-17b-16e-instruct`. First working model is cached.
 - `app/styling.py` — text ladder: `STYLE_MODEL` env → `llama-3.3-70b-versatile`

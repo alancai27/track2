@@ -10,11 +10,11 @@ Guarantees (Track 1 lessons baked in):
   * Wall-clock budget: stop launching heavy work near the deadline.
   * ALWAYS exits 0.
 
-Pipeline per clip: download -> ffmpeg 3 tiny frames -> Groq VLM
+Pipeline per clip: download -> ffmpeg 5 frames @ 384px -> Groq VLM
 factual description -> Groq text model styles 4 captions.
 
 TPM-safe defaults for a 12-clip grading set: 1 worker, staggered
-submits, tiny frames, aggressive 429 retries in llm.chat.
+submits, aggressive 429 retries in llm.chat (budget headroom to wait).
 """
 import json
 import os

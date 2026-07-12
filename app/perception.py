@@ -16,11 +16,18 @@ CANDIDATES = [
 ]
 
 PROMPT = (
-    "These are evenly spaced frames from one short video clip, in order. "
-    "Write a rich, purely FACTUAL description of the clip in 4-6 sentences: "
-    "the setting/location, main subjects, what they are doing, notable "
-    "objects, colors/lighting/weather, and how things change or move across "
-    "the frames. Describe motion and progression, not each frame separately. "
+    "These are evenly spaced frames from one short video clip, in temporal "
+    "order. Write a detailed, purely FACTUAL description in 5-8 sentences "
+    "that a caption writer can rely on. Cover, with concrete specifics:\n"
+    "- Setting/location and environment (indoor/outdoor, place type)\n"
+    "- Main subjects (people/animals/objects): appearance, clothing, colors\n"
+    "- Actions and motion: what is happening and how it progresses across "
+    "the frames\n"
+    "- Notable objects, props, text/signage if clearly readable\n"
+    "- Lighting, weather, time-of-day cues, and overall visual mood "
+    "(only what is visible)\n"
+    "- Distinctive details that make THIS clip unique\n"
+    "Describe the clip as one continuous scene, not frame-by-frame. "
     "No opinions, no humor, no speculation beyond what is visible."
 )
 
@@ -55,7 +62,7 @@ def describe(frames_b64: list[str]) -> str:
     last_err = None
     for model in models:
         try:
-            text = chat(model, messages, max_tokens=350, temperature=0.2)
+            text = chat(model, messages, max_tokens=500, temperature=0.2)
             with _lock:
                 _working_model = model
             print(f"[perception] ok via {model}", flush=True)

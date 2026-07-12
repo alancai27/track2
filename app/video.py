@@ -1,9 +1,9 @@
 """Download clip + extract N evenly-spaced downsized frames as base64 JPEGs.
 
-Design: 3 frames, 256px wide, JPEG q4. VLMs take images not video;
-Groq Llama 4 Scout caps at 5 images/request. Tiny frames cut vision
-tokens hard so a 12-clip set stays under ~30k TPM. Every step has a
-fallback; on total failure returns [] and the caller degrades gracefully.
+Design: 5 frames (Scout's image cap), 384px wide, JPEG q4. VLMs take
+images not video. Serial workers + stagger keep a 12-clip set under
+~30k TPM; 429 retries absorb spikes. Every step has a fallback; on
+total failure returns [] and the caller degrades gracefully.
 """
 import base64
 import os
@@ -12,8 +12,8 @@ import tempfile
 
 import requests
 
-N_FRAMES = int(os.environ.get("N_FRAMES", "3"))
-FRAME_WIDTH = int(os.environ.get("FRAME_WIDTH", "256"))
+N_FRAMES = int(os.environ.get("N_FRAMES", "5"))
+FRAME_WIDTH = int(os.environ.get("FRAME_WIDTH", "384"))
 DOWNLOAD_TIMEOUT = float(os.environ.get("DOWNLOAD_TIMEOUT", "60"))
 
 
