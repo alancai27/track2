@@ -10,11 +10,11 @@ Guarantees (Track 1 lessons baked in):
   * Wall-clock budget: stop launching heavy work near the deadline.
   * ALWAYS exits 0.
 
-Pipeline per clip: download -> ffmpeg 5 frames @ 384px -> Groq VLM
-factual description -> Groq text model styles 4 captions.
+Pipeline per clip: download -> ffmpeg 3–6 frames @ 256px -> Fireworks
+minimax-m3 (draft+verify) -> kimi-k2p6 sequential styled captions.
 
-TPM-safe defaults for a 12-clip grading set: 1 worker, staggered
-submits, aggressive 429 retries in llm.chat (budget headroom to wait).
+TPM/TPD-safe defaults for a 12-clip grading set: 1 worker, staggered
+submits, compact vision payloads, aggressive 429 retries.
 """
 import json
 import os
@@ -26,13 +26,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from llm import key_source  # noqa: E402
+from llm import key_source, token_usage  # noqa: E402
 from perception import describe  # noqa: E402
 from styling import STYLES, style_captions, template_fallbacks  # noqa: E402
 from video import extract_frames_b64  # noqa: E402
 
 INPUT_PATH = os.environ.get("INPUT_PATH", "/input/tasks.json")
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/output/results.json")
+# Sidecar with perception descriptions for local judging (grader ignores this).
+DEBUG_PATH = os.environ.get(
+    "DEBUG_PATH",
+    os.path.join(os.path.dirname(OUTPUT_PATH) or ".", "debug.json"),
+)
 TOTAL_BUDGET = float(os.environ.get("TOTAL_BUDGET_SECONDS", "560"))  # ~9.3 min
 # Serial vision calls — parallel Scout blows Groq's ~30k TPM on 12 clips.
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "1"))
@@ -44,6 +49,7 @@ _write_lock = threading.Lock()
 _stats_lock = threading.Lock()
 # Per-task: True = got a real VLM description; False = generic fallback path.
 _perception_ok: dict[str, bool] = {}
+_descriptions: dict[str, str] = {}
 
 
 def time_left() -> float:
@@ -71,7 +77,7 @@ def write_results(order: list[str], results: dict) -> None:
         payload = [{"task_id": tid, "captions": results[tid]} for tid in order]
         tmp = OUTPUT_PATH + ".tmp"
         try:
-            os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+            os.makedirs(os.path.dirname(OUTPUT_PATH) or ".", exist_ok=True)
             with open(tmp, "w") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             os.replace(tmp, OUTPUT_PATH)
@@ -79,15 +85,39 @@ def write_results(order: list[str], results: dict) -> None:
             print(f"[main] write failed: {e}", flush=True)
 
 
-def _mark_perception(tid: str, ok: bool) -> None:
+def write_debug(order: list[str], results: dict) -> None:
+    """Captions + perception descriptions for local judge (not for grader)."""
+    with _write_lock:
+        with _stats_lock:
+            payload = []
+            for tid in order:
+                payload.append({
+                    "task_id": tid,
+                    "description": _descriptions.get(tid, ""),
+                    "perception_ok": bool(_perception_ok.get(tid)),
+                    "captions": results.get(tid) or {},
+                })
+        tmp = DEBUG_PATH + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(DEBUG_PATH) or ".", exist_ok=True)
+            with open(tmp, "w") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, DEBUG_PATH)
+        except Exception as e:  # noqa: BLE001
+            print(f"[main] debug write failed: {e}", flush=True)
+
+
+def _mark_perception(tid: str, ok: bool, description: str = "") -> None:
     with _stats_lock:
         _perception_ok[tid] = ok
+        _descriptions[tid] = description
 
 
 def process_task(task: dict, order: list[str], results: dict) -> None:
     tid = task["task_id"]
     t0 = time.time()
     got_real = False
+    description = ""
     try:
         if time_left() < 30:
             print(f"[{tid}] skipping heavy work — near budget", flush=True)
@@ -123,7 +153,7 @@ def process_task(task: dict, order: list[str], results: dict) -> None:
     except Exception:  # noqa: BLE001
         print(f"[{tid}] UNEXPECTED:\n{traceback.format_exc()}", flush=True)
     finally:
-        _mark_perception(tid, got_real)
+        _mark_perception(tid, got_real, description if got_real else "")
         # enforce all 4 styles non-empty no matter what happened above
         caps = results.get(tid) or {}
         base = template_fallbacks("")
@@ -132,6 +162,7 @@ def process_task(task: dict, order: list[str], results: dict) -> None:
                 caps[s] = base[s]
         results[tid] = caps
         write_results(order, results)
+        write_debug(order, results)
         tag = "REAL" if got_real else "FALLBACK"
         print(f"[{tid}] done in {time.time() - t0:.1f}s "
               f"perception={tag} ({time_left():.0f}s budget left)", flush=True)
@@ -147,6 +178,18 @@ def _print_perception_summary(order: list[str]) -> None:
     if fallback:
         missed = [tid for tid in order if not _perception_ok.get(tid)]
         print(f"[main] fallback task_ids: {missed}", flush=True)
+    usage = token_usage()
+    total = usage.get("total_tokens", 0)
+    calls = usage.get("calls", 0)
+    per = (total / n) if n else 0
+    print(
+        f"[main] tokens used: total={total} "
+        f"(prompt={usage.get('prompt_tokens', 0)} "
+        f"completion={usage.get('completion_tokens', 0)}) "
+        f"across {calls} API calls; ~{per:.0f}/clip; "
+        f"12-clip estimate≈{per * 12:.0f}",
+        flush=True,
+    )
 
 
 def main() -> None:
@@ -158,7 +201,7 @@ def main() -> None:
     src = key_source()
     print(f"[main] {len(tasks)} tasks; budget {TOTAL_BUDGET:.0f}s; "
           f"workers={MAX_WORKERS}; stagger={STAGGER_SECONDS}s; "
-          f"GROQ key={src}", flush=True)
+          f"FIREWORKS key={src}", flush=True)
 
     if tasks:
         try:
@@ -174,8 +217,10 @@ def main() -> None:
             print(f"[main] pool error:\n{traceback.format_exc()}", flush=True)
 
     write_results(order, results)
+    write_debug(order, results)
     _print_perception_summary(order)
     print(f"[main] finished in {time.time() - START:.1f}s", flush=True)
+    print(f"[main] debug sidecar: {DEBUG_PATH}", flush=True)
 
 
 if __name__ == "__main__":

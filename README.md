@@ -1,29 +1,27 @@
 # amd_track2 — Video Captioning Agent (AMD Hackathon ACT II, Track 2)
 
-Pipeline per clip: download → ffmpeg extracts 5 frames (384px) →
-**Groq Llama 4 Scout** writes one rich factual description → **Llama 3.3 70B**
+Pipeline per clip: download → ffmpeg extracts 3–6 frames (256px) →
+**Fireworks minimax-m3** draft+verify factual description → **kimi-k2p6**
 styles it into 4 captions (formal / sarcastic / humorous_tech /
-humorous_non_tech) in a single strict-JSON call.
+humorous_non_tech) sequentially with variety + guardrails.
 
 ## Layout
 - `app/entrypoint.py` — orchestrator: seeds valid fallback output at t≈0,
-  incremental atomic rewrites, 1-worker pool (TPM-safe) + staggered submits,
-  wall-clock budget (~9.3 min soft), perception REAL/FALLBACK summary,
-  always exits 0.
-- `app/video.py` — download (falls back to ffmpeg streaming the URL directly),
-  ffprobe duration, evenly-spaced frame grabs, base64 JPEGs (5×384px default).
-- `app/perception.py` — vision model ladder: `VISION_MODEL` env →
-  `meta-llama/llama-4-scout-17b-16e-instruct`. First working model is cached.
-- `app/styling.py` — text ladder: `STYLE_MODEL` env → `llama-3.3-70b-versatile`
-  → `llama-3.1-8b-instant`. One JSON call for all 4 styles; per-style rescue
-  calls if JSON is mangled; grounded template fallbacks if everything dies.
-- `app/llm.py` — shared OpenAI-compat Groq client; reads `GROQ_API_KEY` from
-  env only (image gets it via Dockerfile ARG/ENV at CI build time); 429
-  retries (parse "try again in Xs", up to 10) + 400 bare retry.
+  incremental atomic rewrites, 1-worker pool + staggered submits,
+  wall-clock budget (~9.3 min soft), perception REAL/FALLBACK + token-usage
+  summary, always exits 0.
+- `app/video.py` — download, ffprobe duration, dynamic 3–6 evenly-spaced
+  frames (Fireworks VLM allows up to 30), base64 JPEGs.
+- `app/perception.py` — `VISION_MODEL` → `accounts/fireworks/models/minimax-m3`
+  with draft + verify passes (`reasoning_effort=none`).
+- `app/styling.py` — `STYLE_MODEL` → `accounts/fireworks/models/kimi-k2p6`;
+  sequential per-style calls, prior-caption variety, temps, keyword guardrails.
+- `app/llm.py` — OpenAI-compat Fireworks client; `FIREWORKS_API_KEY` from env
+  (baked into image at CI build time); 429 retries + 400 bare retry.
 
 ## Local dev
 ```
-cp .env.example .env   # add your GROQ_API_KEY
+cp .env.example .env   # add your FIREWORKS_API_KEY
 pip install -r requirements.txt
 ./run_examples.sh              # runs the 3 dev clips with plain python
 ./run_examples.sh docker       # runs the built image instead
@@ -35,5 +33,6 @@ pip install -r requirements.txt
 - [ ] `./run_examples.sh docker` → valid JSON, all 4 styles non-empty per clip
 - [ ] Captions eyeballed: accurate + 4 clearly distinct voices
 - [ ] `.env` not committed
+- [ ] Repo secret `FIREWORKS_API_KEY` set for image bake + smoke test
 - [ ] lablab form: image `ghcr.io/alancai27/amd_track2:latest` + placeholder
       slides/video

@@ -30,7 +30,7 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+            FIREWORKS_API_KEY=${{ secrets.FIREWORKS_API_KEY }}
           tags: |
             ghcr.io/alancai27/amd_track2:latest
             ghcr.io/alancai27/amd_track2:${{ github.sha }}
@@ -43,7 +43,7 @@ jobs:
       - name: Smoke-test on 12 clips (3 examples x 4)
         timeout-minutes: 20
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
         run: |
           set -euo pipefail
           mkdir -p io/input io/output
@@ -72,7 +72,7 @@ jobs:
 
           echo "---- container logs ----"
           docker run --rm \
-            -e GROQ_API_KEY="${GROQ_API_KEY}" \
+            -e FIREWORKS_API_KEY="${FIREWORKS_API_KEY}" \
             -e INPUT_PATH=/input/tasks.json \
             -e OUTPUT_PATH=/output/results.json \
             -v "${{ github.workspace }}/io/input:/input" \
@@ -85,7 +85,7 @@ jobs:
           echo
 
           echo "---- perception summary ----"
-          grep -E '\[main\].*real perception|GROQ key=|perception=' smoke.log || true
+          grep -E '\[main\].*real perception|FIREWORKS key=|perception=' smoke.log || true
 
           # Fail the job if most clips fell back (score would be ~0).
           python3 - <<'PY'

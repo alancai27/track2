@@ -1,9 +1,9 @@
 """Download clip + extract N evenly-spaced downsized frames as base64 JPEGs.
 
-Design: 5 frames (Scout's image cap), 384px wide, JPEG q4. VLMs take
-images not video. Serial workers + stagger keep a 12-clip set under
-~30k TPM; 429 retries absorb spikes. Every step has a fallback; on
-total failure returns [] and the caller degrades gracefully.
+Fireworks VLMs allow up to 30 images/request; we use 3–6 dynamically
+(like the 92% competitor) at 256px JPEG q4. Serial workers + stagger
+keep rate limits happy. Every step has a fallback; on total failure
+returns [] and the caller degrades gracefully.
 """
 import base64
 import os
@@ -12,9 +12,11 @@ import tempfile
 
 import requests
 
-N_FRAMES = int(os.environ.get("N_FRAMES", "5"))
-FRAME_WIDTH = int(os.environ.get("FRAME_WIDTH", "384"))
+# Override forces a fixed count; otherwise duration picks 3–6.
+_N_FRAMES_OVERRIDE = os.environ.get("N_FRAMES")
+FRAME_WIDTH = int(os.environ.get("FRAME_WIDTH", "256"))
 DOWNLOAD_TIMEOUT = float(os.environ.get("DOWNLOAD_TIMEOUT", "60"))
+MAX_FRAMES = 6  # well under Fireworks' 30-image VLM cap
 
 
 def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
@@ -44,6 +46,20 @@ def _duration(path_or_url: str) -> float | None:
         return None
 
 
+def _n_frames(dur: float | None) -> int:
+    if _N_FRAMES_OVERRIDE:
+        return max(1, min(int(_N_FRAMES_OVERRIDE), MAX_FRAMES))
+    if not dur or dur <= 0:
+        return 4
+    if dur < 30:
+        return 3
+    if dur < 60:
+        return 4
+    if dur < 90:
+        return 5
+    return 6
+
+
 def _extract_at(src: str, ts: float, out_path: str) -> bool:
     try:
         p = _run(["ffmpeg", "-y", "-ss", f"{ts:.2f}", "-i", src,
@@ -57,16 +73,17 @@ def _extract_at(src: str, ts: float, out_path: str) -> bool:
 
 
 def extract_frames_b64(url: str) -> list[str]:
-    """Return list of base64-encoded JPEG frames (may be < N_FRAMES, or [])."""
+    """Return list of base64-encoded JPEG frames (may be empty)."""
     with tempfile.TemporaryDirectory() as tmp:
         vid = os.path.join(tmp, "clip.mp4")
-        src = vid if _download(url, vid) else url  # fallback: ffmpeg reads URL directly
+        src = vid if _download(url, vid) else url  # fallback: ffmpeg reads URL
 
         dur = _duration(src)
+        n = _n_frames(dur)
         if dur and dur > 0:
-            stamps = [dur * (i + 0.5) / N_FRAMES for i in range(N_FRAMES)]
+            stamps = [dur * (i + 0.5) / n for i in range(n)]
         else:
-            stamps = [1, 5, 10, 20, 40, 70][:N_FRAMES]  # blind fallback
+            stamps = [1, 5, 10, 20, 40, 70][:n]
 
         frames = []
         for i, ts in enumerate(stamps):
@@ -74,11 +91,14 @@ def extract_frames_b64(url: str) -> list[str]:
             if _extract_at(src, ts, out):
                 with open(out, "rb") as f:
                     frames.append(base64.b64encode(f.read()).decode())
-        # last resort: try frame 0 if nothing worked
         if not frames:
             out = os.path.join(tmp, "f0.jpg")
             if _extract_at(src, 0.0, out):
                 with open(out, "rb") as f:
                     frames.append(base64.b64encode(f.read()).decode())
-        print(f"[video] extracted {len(frames)} frames from {url}", flush=True)
+        if dur:
+            print(f"[video] extracted {len(frames)}/{n} frames "
+                  f"(dur={dur:.1f}s)", flush=True)
+        else:
+            print(f"[video] extracted {len(frames)}/{n} frames", flush=True)
         return frames

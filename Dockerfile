@@ -2,9 +2,9 @@
 FROM python:3.11-slim
 
 # Injected at build time from GitHub secret — present at runtime for the
-# grader (which does not pass GROQ_API_KEY). Never commit the key itself.
-ARG GROQ_API_KEY
-ENV GROQ_API_KEY=${GROQ_API_KEY}
+# grader (which does not pass FIREWORKS_API_KEY). Never commit the key itself.
+ARG FIREWORKS_API_KEY
+ENV FIREWORKS_API_KEY=${FIREWORKS_API_KEY}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \

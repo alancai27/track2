@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local end-to-end test on the 3 example clips.
-# Usage: put GROQ_API_KEY (and optionally VISION_MODEL / STYLE_MODEL)
+# Usage: put FIREWORKS_API_KEY (and optionally VISION_MODEL / STYLE_MODEL)
 # in .env, then:  ./run_examples.sh          (python, no docker)
 #                                 ./run_examples.sh docker    (built image)
 set -euo pipefail
