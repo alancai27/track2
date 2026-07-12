@@ -1,0 +1,52 @@
+[
+  {
+    "task_id": "c01",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/1860079-uhd_2560_1440_25fps.mp4",
+    "note": "urban avenue / autumn trees"
+  },
+  {
+    "task_id": "c02",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/13825391-uhd_3840_2160_30fps.mp4",
+    "note": "example clip 2"
+  },
+  {
+    "task_id": "c03",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/3044693-uhd_3840_2160_24fps.mp4",
+    "note": "example clip 3"
+  },
+  {
+    "task_id": "c04",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/11785757-hd_1920_1080_30fps.mp4",
+    "note": "hd clip"
+  },
+  {
+    "task_id": "c05",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/12122308-uhd_2560_1440_24fps.mp4",
+    "note": "uhd clip"
+  },
+  {
+    "task_id": "c06",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/2697636-uhd_1920_1440_30fps.mp4",
+    "note": "uhd clip"
+  },
+  {
+    "task_id": "c07",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/3121327-uhd_2560_1440_24fps.mp4",
+    "note": "uhd clip"
+  },
+  {
+    "task_id": "c08",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/5054248-uhd_2560_1440_25fps.mp4",
+    "note": "uhd clip"
+  },
+  {
+    "task_id": "c09",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/5404543-hd_1920_1080_24fps.mp4",
+    "note": "hd clip"
+  },
+  {
+    "task_id": "c10",
+    "video_url": "https://storage.googleapis.com/amd-hackathon-clips/7963468-uhd_2560_1440_25fps.mp4",
+    "note": "uhd clip"
+  }
+]

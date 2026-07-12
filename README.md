@@ -1,38 +1,54 @@
 # amd_track2 — Video Captioning Agent (AMD Hackathon ACT II, Track 2)
 
-Pipeline per clip: download → ffmpeg extracts 3–6 frames (256px) →
-**Fireworks minimax-m3** draft+verify factual description → **kimi-k2p6**
-styles it into 4 captions (formal / sarcastic / humorous_tech /
-humorous_non_tech) sequentially with variety + guardrails.
+Pipeline per clip: download → temporal-midpoint frames (4/6/8 @ ~768px) →
+**Fireworks minimax-m3** draft+verify → structured fact bullets →
+**kimi-k2p6** sequential short captions with few-shot exemplars.
 
 ## Layout
-- `app/entrypoint.py` — orchestrator: seeds valid fallback output at t≈0,
-  incremental atomic rewrites, 1-worker pool + staggered submits,
-  wall-clock budget (~9.3 min soft), perception REAL/FALLBACK + token-usage
-  summary, always exits 0.
-- `app/video.py` — download, ffprobe duration, dynamic 3–6 evenly-spaced
-  frames (Fireworks VLM allows up to 30), base64 JPEGs.
-- `app/perception.py` — `VISION_MODEL` → `accounts/fireworks/models/minimax-m3`
-  with draft + verify passes (`reasoning_effort=none`).
-- `app/styling.py` — `STYLE_MODEL` → `accounts/fireworks/models/kimi-k2p6`;
-  sequential per-style calls, prior-caption variety, temps, keyword guardrails.
-- `app/llm.py` — OpenAI-compat Fireworks client; `FIREWORKS_API_KEY` from env
-  (baked into image at CI build time); 429 retries + 400 bare retry.
+- `app/entrypoint.py` — orchestrator: seeded fallbacks, atomic rewrites,
+  1-worker + stagger, budget, exit 0.
+- `app/video.py` — midpoint timestamps `(i+0.5)/n`; optional scene frame if
+  meaningfully different; long-edge ~768px.
+- `app/perception.py` — minimax-m3 draft + verify (`reasoning_effort=none`).
+- `app/styling.py` — kimi-k2p6; fact bullets; few-shot good/bad examples;
+  short word budgets; sequential + guardrails.
+- `app/llm.py` — Fireworks OpenAI-compat client; key from env / image bake.
 
 ## Local dev
 ```
 cp .env.example .env   # add your FIREWORKS_API_KEY
 pip install -r requirements.txt
-./run_examples.sh              # runs the 3 dev clips with plain python
-./run_examples.sh docker       # runs the built image instead
+./run_examples.sh
 ```
 
-## Pre-submit checklist
-- [ ] CI green; manifest step confirms **linux/amd64**
-- [ ] GHCR package set to **Public** (verify pull in incognito)
-- [ ] `./run_examples.sh docker` → valid JSON, all 4 styles non-empty per clip
-- [ ] Captions eyeballed: accurate + 4 clearly distinct voices
-- [ ] `.env` not committed
-- [ ] Repo secret `FIREWORKS_API_KEY` set for image bake + smoke test
-- [ ] lablab form: image `ghcr.io/alancai27/amd_track2:latest` + placeholder
-      slides/video
+## A/B harness (do this before shipping prompt/pipeline changes)
+
+Fixed 10-clip public set + blind multimodal pairwise judge (MiniMax M3 with
+frames). Randomizes caption order so the judge cannot favor a label.
+
+```bash
+# Snapshot current code as baseline
+python eval/ab_harness.py run --tag baseline
+
+# Change code/prompts, then snapshot candidate
+python eval/ab_harness.py run --tag candidate
+
+# Blind compare — only ship if recommendation says SHIP
+python eval/ab_harness.py compare \
+  eval/runs/baseline eval/runs/candidate \
+  --out eval/runs/ab_report.json
+```
+
+Smoke (2 clips): `python eval/ab_harness.py run --tag smoke --limit 2`
+
+To A/B uncommitted changes against the last commit:
+```bash
+git stash push -u -m ab-baseline -- app eval
+python eval/ab_harness.py run --tag baseline
+git stash pop
+python eval/ab_harness.py run --tag candidate
+python eval/ab_harness.py compare eval/runs/baseline eval/runs/candidate
+```
+
+Absolute text-only judge (uses perception descriptions, no frames):
+`python eval/judge.py io/output/debug.json`

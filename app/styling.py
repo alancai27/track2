@@ -1,14 +1,11 @@
-"""Styling: verified description -> 4 captions via sequential Fireworks calls.
+"""Style-specific caption generation (competitor engine + our accuracy levers).
 
-Strategy (92%-competitor techniques):
-  * Generate styles ONE AT A TIME; each call sees prior captions and must
-    use a different sentence structure / comedic angle.
-  * Shared hard rules (watched-it voice, no CV jargon, no invented details,
-    25–60 words).
-  * Per-style temperature (formal 0.3; others 0.75).
-  * Keyword guardrail + one regenerate for sarcastic / humorous_tech.
-kimi-k2p6 is a reasoning model — llm.chat sends reasoning_effort=none.
-Template fallbacks if everything fails (missing style = 0 for the clip).
+- Kimi K2P6 with reasoning_effort=none (via llm.chat).
+- Sequential styles; prior captions fed for variety.
+- Keyword heuristics + one retry for weak tech/sarcasm (and tech-leak on
+  non-tech).
+- Structured fact bullets + few-shot exemplars + short word budgets.
+- Template fallbacks — never leave a style empty for the grader.
 """
 import os
 import re
@@ -18,7 +15,6 @@ from llm import chat
 
 STYLES = ["formal", "sarcastic", "humorous_tech", "humorous_non_tech"]
 
-# Fireworks kimi-k2p6 (reasoning; effort=none via llm.chat).
 STYLE_CANDIDATES = [
     "accounts/fireworks/models/kimi-k2p6",
 ]
@@ -30,78 +26,108 @@ STYLE_TEMP = {
     "humorous_non_tech": 0.75,
 }
 
-SHARED_RULES = (
-    "Write as if you personally watched the video. "
-    "Never mention computer vision, models, detection, frames, prompts, "
-    "pipelines, or uncertainty. "
-    "Do not invent details beyond the description. Do not name cities, "
-    "countries, landmarks, or specific locations. Do not mention ethnicity, "
-    "identity labels, religion, or brand names unless explicitly in the "
-    "description. "
-    "Write ONE caption, one or two sentences, roughly 25 to 60 words. "
-    "Write in grammatically correct, natural, polished English. Re-read and "
-    "ensure the sentence is fluent and error-free. "
-    "Reply with the caption only — no quotes, no labels, no preamble."
-)
+# Short budgets beat 25–60 filler (competitor later plan + our judge).
+STYLE_WORDS = {
+    "formal": (15, 28),
+    "sarcastic": (12, 24),
+    "humorous_tech": (15, 28),
+    "humorous_non_tech": (12, 24),
+}
 
-STYLE_SPECS = {
+# Competitor style prompts (kept close to theirs; small accuracy addenda).
+STYLE_PROMPTS = {
     "formal": (
-        "Polished, objective, professional voice. Factual and precise. "
-        "No opinion, no humor, no exclamation marks."
+        "Write a formal, professional, objective caption. Factual tone, no humor, "
+        "no slang, no embellishment. Describe only what is visible."
     ),
     "sarcastic": (
-        "Dry irony — fake enthusiasm, mock profundity, deadpan understatement, "
-        "or ironic praise. Lightly mock the scene while staying accurate. "
-        "BANNED phrases (any wording): 'just what the world needed', 'just "
-        "what was missing', 'oh great', 'how thrilling', 'because the world "
-        "was missing that'."
+        "Write a sarcastic caption: dry, ironic, lightly mocking, grounded in the "
+        "specific action described. Stay lighthearted and non-offensive. "
+        "Do not use crutches like 'oh great', 'how thrilling', or 'just what the "
+        "world needed'."
     ),
     "humorous_tech": (
-        "Genuinely funny caption using ONE fresh tech/programming metaphor "
-        "that fits the scene (git, merge conflicts, APIs, RAM, caching, "
-        "compiling, debugging, Stack Overflow, cloud, latency, null pointers, "
-        "race conditions, segfaults, unit tests, CI, kernels…). "
-        "Do NOT use deploy/deploying/shipping-to-prod as the joke. "
-        "The humor must be grounded in what is ACTUALLY visible in the video. "
-        "You may be funny about the real subjects/actions/setting, but do NOT "
-        "invent objects, scenarios, or events that aren't in the description. "
-        "Every caption must remain accurate to the actual clip content."
+        "Write a funny caption using technology, software, programming, network, "
+        "game engine, or debugging references. The tech reference should be natural "
+        "and the caption should still describe the video. The metaphor can be "
+        "creative (git/cache/RAM need not be visible) but the subject/action it "
+        "maps onto must match the facts. Avoid 'deploy/deploying/shipping to prod' "
+        "as the joke."
     ),
     "humorous_non_tech": (
-        "Genuinely funny everyday caption — playful, relatable, warm. "
-        "Absolutely NO tech or programming references or jargon. "
-        "The humor must be grounded in what is ACTUALLY visible in the video. "
-        "You may be funny about the real subjects/actions/setting, but do NOT "
-        "invent objects, scenarios, or events that aren't in the description. "
-        "Every caption must remain accurate to the actual clip content."
+        "Write a funny everyday-humor caption with no technical jargon. Relatable, "
+        "light-hearted, and grounded in the video. Riff only on real subjects/"
+        "actions/setting from the facts — invent nothing."
     ),
 }
 
-# Guardrail keyword lists (lowercase substring match).
-TECH_KEYWORDS = (
-    "git", "commit", "merge", "api", "apis", "ram", "cache", "caching",
-    "compile", "compiling", "compiled", "debug", "debugging", "debugger",
-    "stack overflow", "cloud", "latency", "null", "pointer", "segfault",
-    "race condition", "unit test", "ci ", " ci", "kernel", "bug", "cpu",
-    "gpu", "server", "code", "coding", "algorithm", "repo", "thread",
-    "async", "json", "http", "memory", "buffer", "stack", "heap", "runtime",
-    "exception", "timeout", "ping", "bandwidth", "pixel", "bit ", "byte",
-    "syntax", "compiler", "interpreter", "protocol", "socket", "query",
-    "database", "sql", "regex", "pipeline", "container", "docker", "linux",
-    "kernel", "firmware", "hardware", "software", "npm", "python", "java",
-)
+# Competitor keyword sets (+ a few extras we found useful).
+TECH_STYLE_WORDS = {
+    "api", "bug", "cache", "commit", "debug", "latency", "log",
+    "pipeline", "queue", "rollback", "runtime", "scheduler", "server",
+    "thread", "packet", "loop", "function", "variable", "compile",
+    "render", "frame rate", "fps", "bandwidth", "cpu", "gpu",
+    "memory", "overflow", "underflow", "exception", "crash", "reboot",
+    "git", "merge", "ram", "null", "pointer", "segfault", "kernel",
+    "stack", "heap", "async", "syntax", "compiler", "docker", "repo",
+}
 
-SARCASM_MARKERS = (
-    "clearly", "apparently", "obviously", "sure,", "of course", "nothing says",
-    "peak ", "as if", "riveting", "thrilling", "groundbreaking", "masterpiece",
-    "fascinating", "who wouldn't", "because nothing", "truly", "absolutely",
-    "essential", "exactly what", "just what every", "inspiring", "heroic",
-    "legendary", "breathtaking", "nail-biting", "can't wait", "thrilled",
-    "delighted", "privileged", "honored", "deeply moving", "life-changing",
-    "unprecedented", "bold strategy", "flawless", "perfect timing",
-    "what a time", "another day", "priorities", "totally normal",
-    "no notes", "chef's kiss", "iconic", "vibes", "surely",
-)
+SARCASM_MARKERS = {
+    "apparently", "because", "clearly", "naturally", "of course", "obviously",
+    "serious", "thrilling", "groundbreaking", "fascinating", "riveting",
+    "nothing says", "nothing screams", "truly", "sure", "surely",
+    "olympic", "history will", "priorities", "totally normal", "no notes",
+}
+
+# Few-shots unrelated to likely clip topics (register, not content).
+STYLE_EXAMPLES = {
+    "formal": {
+        "good": [
+            "A ceramic bowl of steaming broth sits on a wooden counter beside "
+            "chopped scallions.",
+            "Two hikers cross a narrow rope bridge over a misty ravine at dawn.",
+        ],
+        "bad": (
+            "This amazing soup looks delicious and makes me want to travel "
+            "somewhere wonderful right now!!!"
+        ),
+    },
+    "sarcastic": {
+        "good": [
+            "Nothing builds character like waiting for water to boil while "
+            "staring at it with Olympic focus.",
+            "Yes, rearrange the same three pillows again — interior design "
+            "history will remember this.",
+        ],
+        "bad": (
+            "Oh great, just what the world needed: another video of someone "
+            "cooking soup."
+        ),
+    },
+    "humorous_tech": {
+        "good": [
+            "That kettle is stuck in a busy-wait loop until the interrupt "
+            "finally fires.",
+            "Pillow fluffing looks like a garbage-collection pass that still "
+            "leaves fragmentation.",
+        ],
+        "bad": (
+            "Deploying soup to production in the cloud with AI Kubernetes "
+            "microservices."
+        ),
+    },
+    "humorous_non_tech": {
+        "good": [
+            "The kettle's basically peer-pressuring the water into becoming "
+            "tea already.",
+            "Those pillows are getting the spa day the rest of us were promised.",
+        ],
+        "bad": (
+            "When your API latency is higher than your morning motivation "
+            "(so true bestie)."
+        ),
+    },
+}
 
 _lock = threading.Lock()
 _working_model: str | None = None
@@ -117,7 +143,7 @@ def _candidate_models() -> list[str]:
 
 
 def template_fallbacks(description: str) -> dict[str, str]:
-    """Never-empty last resort. Generic but grounded if we have a description."""
+    """Never-empty last resort (grader zeros missing styles)."""
     scene = description.strip().split(".")[0].strip() if description.strip() \
         else "A short video clip"
     scene = scene[:140]
@@ -133,86 +159,182 @@ def template_fallbacks(description: str) -> dict[str, str]:
     }
 
 
+def facts_to_bullets(description: str) -> str:
+    """Structured facts for grounding (Subjects/Actions/Setting/Objects/Mood)."""
+    desc = (description or "").strip()
+    if not desc:
+        return (
+            "- Subjects: unknown\n- Actions: unknown\n"
+            "- Setting: unknown\n- Objects: none noted\n- Mood: neutral"
+        )
+    if re.search(r"(?i)^\s*-\s*subjects\s*:", desc, re.M):
+        return desc
+    # Prefer fields already present in verified paragraph from perception.
+    bullets = []
+    for label, patterns in (
+        ("Subjects", [r"(?i)Subjects:\s*(.+?)(?:\s+(?:Setting|Actions|Objects|Mood|Audio|Notable)\b|$)"]),
+        ("Actions", [r"(?i)Actions:\s*(.+?)(?:\s+(?:Setting|Subjects|Objects|Mood|Audio|Notable)\b|$)"]),
+        ("Setting", [r"(?i)Setting:\s*(.+?)(?:\s+(?:Subjects|Actions|Objects|Mood|Audio|Notable)\b|$)"]),
+        ("Objects", [r"(?i)Objects(?:/details)?:\s*(.+?)(?:\s+(?:Setting|Subjects|Actions|Mood|Audio|Notable)\b|$)"]),
+        ("Mood", [r"(?i)Mood:\s*(.+?)(?:\s+(?:Setting|Subjects|Actions|Objects|Audio|Notable)\b|$)"]),
+    ):
+        found = ""
+        for pat in patterns:
+            m = re.search(pat, desc)
+            if m:
+                found = m.group(1).strip(" .;")
+                break
+        bullets.append(f"- {label}: {found or '(see summary)'}")
+
+    if any("(see summary)" not in b for b in bullets):
+        # Keep overall summary as Actions supplement if parsing was partial.
+        summary = desc.split("Setting:")[0].strip()
+        if summary and len(summary) > 20:
+            bullets[1] = f"- Actions: {summary}" if "(see summary)" in bullets[1] \
+                else bullets[1]
+        return "\n".join(bullets)
+
+    prompt = (
+        "Convert this video description into EXACTLY these five labeled "
+        "bullets. Use short phrases, no inventing facts not in the text.\n"
+        "Format:\n"
+        "- Subjects: ...\n- Actions: ...\n- Setting: ...\n"
+        "- Objects: ...\n- Mood: ...\n\n"
+        f"Description:\n{desc}\n\n"
+        "Reply with ONLY the five bullets."
+    )
+    with _lock:
+        models = ([_working_model] if _working_model else []) + \
+            [m for m in _candidate_models() if m != _working_model]
+    for model in models:
+        try:
+            text = chat(model, [{"role": "user", "content": prompt}],
+                        max_tokens=180, temperature=0.1)
+            if text and "Subjects" in text and "Actions" in text:
+                print(f"[styling] facts structured via {model}", flush=True)
+                return text.strip()
+        except Exception as e:  # noqa: BLE001
+            print(f"[styling] facts structure failed on {model}: {e}",
+                  flush=True)
+    return (
+        f"- Subjects: (see description)\n"
+        f"- Actions: {desc}\n"
+        f"- Setting: (see description)\n"
+        f"- Objects: (see description)\n"
+        f"- Mood: (see description)"
+    )
+
+
 def _clean_caption(text: str) -> str:
-    text = text.strip().strip('"').strip("'").strip()
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        text = text[1:-1].strip()
     text = re.sub(r"^(caption|formal|sarcastic|humorous[_ ]?\w+)\s*:\s*",
                   "", text, flags=re.I)
-    # Keep at most two sentences' worth of lines.
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     return " ".join(lines) if lines else ""
 
 
-def _has_tech(caption: str) -> bool:
-    low = f" {caption.lower()} "
-    return any(k in low or k in caption.lower() for k in TECH_KEYWORDS)
-
-
-def _has_sarcasm(caption: str) -> bool:
-    low = caption.lower()
-    return any(m in low for m in SARCASM_MARKERS)
-
-
-def _passes_guardrail(style: str, caption: str) -> bool:
-    if not caption or len(caption.split()) < 8:
-        return False
+def _needs_style_retry(style: str, caption: str) -> bool:
+    """Check if a caption obviously misses its style target (competitor heuristic)."""
+    if not caption:
+        return True
+    normalized = caption.lower()
+    lo, _hi = STYLE_WORDS[style]
+    if len(caption.split()) < max(8, lo - 4):
+        return True
     if style == "humorous_tech":
-        return _has_tech(caption)
+        return not any(word in normalized for word in TECH_STYLE_WORDS)
     if style == "sarcastic":
-        return _has_sarcasm(caption)
+        return not any(marker in normalized for marker in SARCASM_MARKERS)
     if style == "humorous_non_tech":
-        return not _has_tech(caption)
-    return True
+        return any(word in normalized for word in TECH_STYLE_WORDS)
+    return False
 
 
-def _build_prompt(description: str, style: str,
-                  prior: dict[str, str]) -> str:
-    parts = [
-        f"Video description:\n{description}\n",
-        f"Write a {style} caption.\nStyle brief: {STYLE_SPECS[style]}\n",
-        f"Rules: {SHARED_RULES}",
-    ]
-    if prior:
-        parts.append(
-            "\nAlready-written captions for this SAME clip (do NOT copy "
-            "their sentence structure or comedic angle — pick a distinctly "
-            "different structure and angle):\n"
+def _examples_block(style: str) -> str:
+    ex = STYLE_EXAMPLES[style]
+    lines = ["Good examples (match this register, not these topics):"]
+    for g in ex["good"]:
+        lines.append(f'  ✓ "{g}"')
+    lines.append(f'Bad example (avoid this register): ✗ "{ex["bad"]}"')
+    return "\n".join(lines)
+
+
+def _generate_caption(
+    model: str,
+    facts: str,
+    style: str,
+    prior_captions: list[str],
+    *,
+    retry: bool = False,
+) -> str:
+    """Generate one caption for a style (competitor prompt skeleton)."""
+    lo, hi = STYLE_WORDS[style]
+    variety_note = ""
+    if prior_captions:
+        variety_note = (
+            "\n\nCaptions already written for this clip in other styles. "
+            "Use a different sentence structure and comedic angle: "
+            + " | ".join(prior_captions)
         )
-        for s, cap in prior.items():
-            parts.append(f"- {s}: {cap}\n")
-    return "".join(parts)
 
-
-def _generate_one(model: str, description: str, style: str,
-                  prior: dict[str, str], *, retry: bool = False) -> str:
-    prompt = _build_prompt(description, style, prior)
+    retry_note = ""
     if retry:
         if style == "humorous_tech":
-            prompt += (
-                "\nRETRY: Your previous attempt lacked a clear tech metaphor. "
-                "Include an explicit programming/tech reference that fits."
+            retry_note = (
+                "\nRETRY: previous attempt lacked a clear tech reference — "
+                "include one, stay accurate to the facts."
             )
         elif style == "sarcastic":
-            prompt += (
-                "\nRETRY: Your previous attempt was not clearly sarcastic. "
-                "Lean harder into dry irony or ironic praise."
+            retry_note = (
+                "\nRETRY: previous attempt was not clearly sarcastic — "
+                "lean into dry irony."
             )
         elif style == "humorous_non_tech":
-            prompt += (
-                "\nRETRY: Remove ALL tech/programming jargon; keep it everyday."
+            retry_note = (
+                "\nRETRY: remove ALL tech jargon; keep everyday humor only."
             )
+
+    prompt = (
+        f"{STYLE_PROMPTS[style]}\n\n"
+        f"Structured facts about the video (ground ALL claims here):\n{facts}\n\n"
+        f"Write ONE caption, one or two sentences, {lo} to {hi} words. "
+        "Must include the central subject and what they are doing. "
+        "Write as if you personally watched the video. "
+        "Never mention computer vision, models, detection, frames, prompts, "
+        "pipelines, or uncertainty. "
+        "Do not invent details beyond the facts. Do not name cities, countries, "
+        "landmarks, or specific locations. "
+        "Do not mention ethnicity, identity labels, religion markers, brand "
+        "names, or signs unless they are explicitly present in the factual "
+        "description. "
+        "Write in grammatically correct, natural, polished English. "
+        "Output only the caption text.\n\n"
+        f"{_examples_block(style)}"
+        f"{variety_note}"
+        f"{retry_note}"
+    )
+
     text = chat(
         model,
         [{"role": "user", "content": prompt}],
-        max_tokens=120,
+        max_tokens=90,
         temperature=STYLE_TEMP[style],
     )
     return _clean_caption(text)
 
 
 def style_captions(description: str) -> dict[str, str]:
-    """Return dict with all 4 styles, guaranteed non-empty."""
+    """
+    Generate captions for all four styles sequentially.
+
+    Prior captions are fed into later styles so outputs do not sound identical.
+    Weak captions are retried once based on keyword heuristics.
+    """
     global _working_model
     result = template_fallbacks(description)
+    facts = facts_to_bullets(description)
 
     with _lock:
         models = ([_working_model] if _working_model else []) + \
@@ -220,24 +342,30 @@ def style_captions(description: str) -> dict[str, str]:
 
     for model in models:
         try:
-            prior: dict[str, str] = {}
+            prior: list[str] = []
             ok = 0
             for style in STYLES:
-                caption = _generate_one(model, description, style, prior)
-                if not _passes_guardrail(style, caption):
-                    print(f"[styling] {style} failed guardrail; retrying",
-                          flush=True)
-                    caption2 = _generate_one(
-                        model, description, style, prior, retry=True
-                    )
-                    if _passes_guardrail(style, caption2):
-                        caption = caption2
-                    elif caption2 and not caption:
-                        caption = caption2
-                if caption:
-                    result[style] = caption
-                    prior[style] = caption
-                    ok += 1
+                try:
+                    caption = _generate_caption(model, facts, style, prior)
+                    if _needs_style_retry(style, caption):
+                        print(f"[styling] {style}: retrying weak caption...",
+                              flush=True)
+                        caption2 = _generate_caption(
+                            model, facts, style, prior, retry=True
+                        )
+                        if caption2 and not _needs_style_retry(style, caption2):
+                            caption = caption2
+                        elif caption2 and not caption:
+                            caption = caption2
+                    if caption:
+                        result[style] = caption
+                        prior.append(caption)
+                        ok += 1
+                except Exception as e:  # noqa: BLE001
+                    print(f"[styling] {style} failed: {e}", flush=True)
+                    # keep template fallback already in result
+                    prior.append(result[style])
+
             if ok == 4:
                 with _lock:
                     _working_model = model

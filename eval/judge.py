@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
 from llm import chat  # noqa: E402
-from styling import STYLE_SPECS, STYLES  # noqa: E402
+from styling import STYLE_PROMPTS, STYLES  # noqa: E402
 
 JUDGE_MODEL = os.environ.get(
     "JUDGE_MODEL", "accounts/fireworks/models/kimi-k2p6"
@@ -111,7 +111,7 @@ def judge_caption(description: str, style: str, caption: str) -> dict:
             "reason": "empty caption",
         }
 
-    style_blurb = STYLE_BLURBS.get(style, STYLE_SPECS.get(style, style))
+    style_blurb = STYLE_BLURBS.get(style, STYLE_PROMPTS.get(style, style))
     prompt = (
         f"You are a strict grading judge for video captions.\n\n"
         f"Video description (ground truth of what is in the clip):\n"

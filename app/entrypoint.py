@@ -10,8 +10,9 @@ Guarantees (Track 1 lessons baked in):
   * Wall-clock budget: stop launching heavy work near the deadline.
   * ALWAYS exits 0.
 
-Pipeline per clip: download -> ffmpeg 3–6 frames @ 256px -> Fireworks
-minimax-m3 (draft+verify) -> kimi-k2p6 sequential styled captions.
+Pipeline per clip: download -> temporal-midpoint frames (4/6/8 @ ~768px)
+-> Fireworks minimax-m3 draft+verify -> kimi-k2p6 sequential captions
+from structured fact bullets.
 
 TPM/TPD-safe defaults for a 12-clip grading set: 1 worker, staggered
 submits, compact vision payloads, aggressive 429 retries.
