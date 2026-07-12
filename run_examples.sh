@@ -1,19 +1,12 @@
 #!/usr/bin/env bash
-# Local end-to-end test on the 3 example clips.
-# Usage: put FIREWORKS_API_KEY (and optionally VISION_MODEL / STYLE_MODEL)
-# in .env, then:  ./run_examples.sh          (python, no docker)
-#                                 ./run_examples.sh docker    (built image)
+# Local end-to-end test on the official example clips.
+# Usage: put FIREWORKS_API_KEY in .env, then:  ./run_examples.sh
+#                                         ./run_examples.sh docker
 set -euo pipefail
 cd "$(dirname "$0")"
 
 mkdir -p io/input io/output
-cat > io/input/tasks.json <<'EOF'
-[
-  {"task_id":"v1","video_url":"https://storage.googleapis.com/amd-hackathon-clips/1860079-uhd_2560_1440_25fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]},
-  {"task_id":"v2","video_url":"https://storage.googleapis.com/amd-hackathon-clips/13825391-uhd_3840_2160_30fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]},
-  {"task_id":"v3","video_url":"https://storage.googleapis.com/amd-hackathon-clips/3044693-uhd_3840_2160_24fps.mp4","styles":["formal","sarcastic","humorous_tech","humorous_non_tech"]}
-]
-EOF
+cp examples/tasks.json io/input/tasks.json
 
 if [[ "${1:-}" == "docker" ]]; then
   docker run --rm --env-file .env \
@@ -22,7 +15,7 @@ if [[ "${1:-}" == "docker" ]]; then
 else
   set -a; [[ -f .env ]] && source .env; set +a
   INPUT_PATH=io/input/tasks.json OUTPUT_PATH=io/output/results.json \
-    python app/entrypoint.py
+    python agent.py
 fi
 
 echo "----- results -----"

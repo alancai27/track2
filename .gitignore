@@ -1,6 +1,9 @@
 .env
 io/
-eval/runs/
 __pycache__/
 *.pyc
 .DS_Store
+.venv/
+venv/
+output/
+*.log

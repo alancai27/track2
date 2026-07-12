@@ -1,54 +1,50 @@
-# amd_track2 — Video Captioning Agent (AMD Hackathon ACT II, Track 2)
+# amd_track2 — peer 0.92 pipeline port
 
-Pipeline per clip: download → temporal-midpoint frames (4/6/8 @ ~768px) →
-**Fireworks minimax-m3** draft+verify → structured fact bullets →
-**kimi-k2p6** sequential short captions with few-shot exemplars.
+This branch is a **faithful copy** of
+[pjmorales1123/amd-track2-agent-v2](https://github.com/pjmorales1123/amd-track2-agent-v2)
+(score **0.92**, top 3), wired to our GHCR image
+`ghcr.io/alancai27/amd_track2:latest`.
+
+## Pipeline
+
+```
+tasks.json
+  -> download clip
+  -> dynamic keyframe extraction (3–6 frames; first+last + scene cuts)
+  -> optional local Whisper (AUTO_TRANSCRIBE=false by default)
+  -> MiniMax M3 structured brief
+  -> MiniMax M3 verification/correction
+  -> Kimi K2P6 sequential style captions + keyword guardrails
+  -> results.json
+```
+
+## Models
+
+- Vision / brief / verify: `accounts/fireworks/models/minimax-m3`
+- Captions: `accounts/fireworks/models/kimi-k2p6` (`reasoning_effort=none`)
 
 ## Layout
-- `app/entrypoint.py` — orchestrator: seeded fallbacks, atomic rewrites,
-  1-worker + stagger, budget, exit 0.
-- `app/video.py` — midpoint timestamps `(i+0.5)/n`; optional scene frame if
-  meaningfully different; long-edge ~768px.
-- `app/perception.py` — minimax-m3 draft + verify (`reasoning_effort=none`).
-- `app/styling.py` — kimi-k2p6; fact bullets; few-shot good/bad examples;
-  short word budgets; sequential + guardrails.
-- `app/llm.py` — Fireworks OpenAI-compat client; key from env / image bake.
 
-## Local dev
-```
-cp .env.example .env   # add your FIREWORKS_API_KEY
+- `agent.py` — orchestration, concurrency, per-clip timeout, placeholders
+- `config.py` — env-based config
+- `schemas.py` — Pydantic schemas
+- `pipeline/extract.py` — download + keyframes + audio
+- `pipeline/analyze.py` — MiniMax brief + verify
+- `pipeline/caption.py` — Kimi sequential styles
+- `pipeline/transcribe.py` — optional faster-whisper
+
+## Local run
+
+```bash
+cp .env.example .env   # FIREWORKS_API_KEY=...
 pip install -r requirements.txt
 ./run_examples.sh
 ```
 
-## A/B harness (do this before shipping prompt/pipeline changes)
+## Docker / submit
 
-Fixed 10-clip public set + blind multimodal pairwise judge (MiniMax M3 with
-frames). Randomizes caption order so the judge cannot favor a label.
+CI on `main` (or workflow_dispatch) builds `linux/amd64` and pushes
+`ghcr.io/alancai27/amd_track2:latest` with the baked Fireworks key.
 
-```bash
-# Snapshot current code as baseline
-python eval/ab_harness.py run --tag baseline
-
-# Change code/prompts, then snapshot candidate
-python eval/ab_harness.py run --tag candidate
-
-# Blind compare — only ship if recommendation says SHIP
-python eval/ab_harness.py compare \
-  eval/runs/baseline eval/runs/candidate \
-  --out eval/runs/ab_report.json
-```
-
-Smoke (2 clips): `python eval/ab_harness.py run --tag smoke --limit 2`
-
-To A/B uncommitted changes against the last commit:
-```bash
-git stash push -u -m ab-baseline -- app eval
-python eval/ab_harness.py run --tag baseline
-git stash pop
-python eval/ab_harness.py run --tag candidate
-python eval/ab_harness.py compare eval/runs/baseline eval/runs/candidate
-```
-
-Absolute text-only judge (uses perception descriptions, no frames):
-`python eval/judge.py io/output/debug.json`
+See `PROJECT_HISTORY.md`, `IMPROVEMENT_PLAN.md`, and `SUBMISSION.md`
+(from the original repo) for context.
