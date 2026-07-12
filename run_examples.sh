@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Local end-to-end test on the official example clips.
-# Usage: put FIREWORKS_API_KEY in .env, then:  ./run_examples.sh
-#                                         ./run_examples.sh docker
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -15,7 +12,7 @@ if [[ "${1:-}" == "docker" ]]; then
 else
   set -a; [[ -f .env ]] && source .env; set +a
   INPUT_PATH=io/input/tasks.json OUTPUT_PATH=io/output/results.json \
-    python agent.py
+    python app/entrypoint.py
 fi
 
 echo "----- results -----"
