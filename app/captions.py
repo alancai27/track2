@@ -1,41 +1,41 @@
-"""Four-style caption writer (sequential + light keyword guardrails)."""
+"""Sequential four-style captions with keyword guardrails."""
 import re
 
 from client import complete
 import settings
 
-# Heuristic cues — same idea as the 0.92 stack, wording/lists refreshed.
-_TECH_CUES = {
+# Exact cue sets from the 0.92 pipeline (scoring-sensitive).
+TECH_STYLE_WORDS = {
     "api", "bug", "cache", "commit", "debug", "deploy", "latency", "log",
     "pipeline", "queue", "rollback", "runtime", "scheduler", "server",
     "thread", "packet", "loop", "function", "variable", "compile",
-    "render", "fps", "bandwidth", "cpu", "gpu", "memory", "exception",
-    "crash", "reboot", "git", "ram", "null", "kernel", "stack", "async",
+    "render", "frame rate", "fps", "bandwidth", "bandwidth", "cpu", "gpu",
+    "memory", "overflow", "underflow", "exception", "crash", "reboot",
 }
 
-_SARCASM_CUES = {
+SARCASM_MARKERS = {
     "apparently", "because", "clearly", "naturally", "of course", "obviously",
     "serious", "thrilling", "groundbreaking", "fascinating", "riveting",
-    "nothing says", "nothing screams", "truly", "sure", "surely",
+    "nothing says", "nothing screams", "truly", "sure",
 }
 
-_VOICE = {
+STYLE_PROMPTS = {
     "formal": (
-        "Compose a formal, objective caption. Neutral diction, no jokes, "
-        "no slang — only what the notes support."
+        "Write a formal, professional, objective caption. Factual tone, no humor, "
+        "no slang, no embellishment. Describe only what is visible."
     ),
     "sarcastic": (
-        "Compose a dry, ironic caption that lightly needles the scene while "
-        "staying accurate and inoffensive."
+        "Write a sarcastic caption: dry, ironic, lightly mocking, grounded in the "
+        "specific action described. Stay lighthearted and non-offensive."
     ),
     "humorous_tech": (
-        "Compose a witty caption that folds in a natural software/tech "
-        "metaphor (debugging, networks, engines, etc.) without losing the "
-        "actual scene."
+        "Write a funny caption using technology, software, programming, network, "
+        "game engine, or debugging references. The tech reference should be natural "
+        "and the caption should still describe the video."
     ),
     "humorous_non_tech": (
-        "Compose a warm, everyday-funny caption with zero tech jargon, "
-        "rooted in what actually happens on screen."
+        "Write a funny everyday-humor caption with no technical jargon. Relatable, "
+        "light-hearted, and grounded in the video."
     ),
 }
 
@@ -48,92 +48,82 @@ _TEMP = {
 
 
 def seed_captions(reason: str = "unavailable") -> dict[str, str]:
-    """Non-empty placeholders so the grader never sees missing styles."""
-    base = f"Unable to caption this clip ({reason})."
-    return {s: base for s in settings.STYLES}
+    """Non-empty placeholders so missing styles never zero a task."""
+    msg = f"Unable to process this video clip ({reason})."
+    return {s: msg for s in settings.STYLES}
 
 
-def _tidy(text: str) -> str:
+def _clean_caption(text: str) -> str:
     text = text.strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
         text = text[1:-1].strip()
-    text = re.sub(
-        r"^(caption|formal|sarcastic|humorous[_ ]?\w+)\s*:\s*",
-        "", text, flags=re.I,
-    )
-    return " ".join(ln.strip() for ln in text.splitlines() if ln.strip())
+    return text
 
 
-def _weak(style: str, caption: str) -> bool:
-    if not caption:
-        return True
-    low = caption.lower()
+def _needs_style_retry(style: str, caption: str) -> bool:
+    normalized = caption.lower()
     if style == "humorous_tech":
-        return not any(w in low for w in _TECH_CUES)
+        return not any(word in normalized for word in TECH_STYLE_WORDS)
     if style == "sarcastic":
-        return not any(m in low for m in _SARCASM_CUES)
+        return not any(marker in normalized for marker in SARCASM_MARKERS)
     return False
 
 
-def _one(
-    notes: str,
+def _generate_caption(
+    description: str,
     style: str,
-    already: list[str],
-    *,
-    retry: bool = False,
+    prior_captions: list[str],
 ) -> str:
-    variety = ""
-    if already:
-        variety = (
-            "\n\nEarlier captions for this same clip (vary structure/angle): "
-            + " | ".join(already)
+    variety_note = ""
+    if prior_captions:
+        variety_note = (
+            "\n\nCaptions already written for this clip in other styles. "
+            "Use a different sentence structure and comedic angle: "
+            + " | ".join(prior_captions)
         )
-    nudge = ""
-    if retry:
-        if style == "humorous_tech":
-            nudge = "\nRetry: include a clear tech reference; stay factual."
-        elif style == "sarcastic":
-            nudge = "\nRetry: lean harder into dry irony."
 
     prompt = (
-        f"{_VOICE[style]}\n\n"
-        f"Grounding notes (do not contradict):\n{notes}\n\n"
-        "Write one caption (1–2 sentences, about 25–60 words). "
-        "Sound like you watched the clip. Never mention models, frames, "
-        "prompts, pipelines, or uncertainty. Invent nothing beyond the notes. "
-        "Avoid city/country/landmark names and identity/brand labels unless "
-        "the notes already state them. Output caption text only."
-        f"{variety}{nudge}"
+        f"{STYLE_PROMPTS[style]}\n\n"
+        f"Factual description of the video:\n{description}\n\n"
+        "Write ONE caption, one or two sentences, roughly 25 to 60 words. "
+        "Write as if you personally watched the video. "
+        "Never mention computer vision, models, detection, frames, prompts, pipelines, or uncertainty. "
+        "Do not invent details beyond the description. Do not name cities, countries, landmarks, or specific locations. "
+        "Do not mention ethnicity, identity labels, religion markers, brand names, or signs unless they are "
+        "explicitly present in the factual description. Output only the caption text."
+        f"{variety_note}"
     )
-    raw = complete(
+
+    text = complete(
         settings.CAPTION_MODEL,
         [{"role": "user", "content": prompt}],
         max_tokens=settings.CAPTION_TOKENS,
         temperature=_TEMP[style],
     )
-    return _tidy(raw)
+    return _clean_caption(text)
 
 
-def write_styles(notes: str) -> dict[str, str]:
-    """Sequential captions; one keyword-based retry for weak tech/sarcasm."""
-    out = seed_captions("generation pending")
+def write_styles(description: str) -> dict[str, str]:
+    """
+    Generate captions for all four styles sequentially.
+
+    Prior captions are fed into later styles so outputs do not sound identical.
+    Weak captions are retried once based on keyword heuristics.
+    """
+    results: dict[str, str] = {}
     prior: list[str] = []
+
     for style in settings.STYLES:
         try:
-            cap = _one(notes, style, prior)
-            if _weak(style, cap):
-                print(f"[captions] {style}: weak → retry", flush=True)
-                cap2 = _one(notes, style, prior, retry=True)
-                if cap2 and not _weak(style, cap2):
-                    cap = cap2
-                elif cap2 and not cap:
-                    cap = cap2
-            if cap:
-                out[style] = cap
-                prior.append(cap)
-            else:
-                prior.append(out[style])
+            caption = _generate_caption(description, style, prior)
+            if _needs_style_retry(style, caption):
+                print(f"[captions] {style}: retrying weak caption...", flush=True)
+                caption = _generate_caption(description, style, prior)
+            results[style] = caption
+            prior.append(caption)
         except Exception as e:  # noqa: BLE001
             print(f"[captions] {style} failed: {e}", flush=True)
-            prior.append(out[style])
-    return out
+            results[style] = f"Unable to generate a {style} caption for this clip."
+            prior.append(results[style])
+
+    return results

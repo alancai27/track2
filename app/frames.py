@@ -100,8 +100,9 @@ def _scene_cuts(src: str) -> list[float]:
 
 
 def _pick_timestamps(dur: float, scenes: list[float], n: int) -> list[float]:
-    """Always keep open/close; fill with scene cuts / even spacing to reach n."""
-    end = max(dur - 0.5, dur * 0.9)
+    """Always keep first/last; fill with scene cuts / even spacing to reach n."""
+    # Match 0.92 clamp: duration - 0.5 (not a 0.9*dur mix).
+    end = max(dur - 0.5, 0.0)
     picks = [0.0] + [t for t in scenes if 0.0 < t < dur] + [dur]
     picks = sorted(set(round(t, 3) for t in picks))
 

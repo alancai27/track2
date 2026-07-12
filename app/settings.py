@@ -1,12 +1,5 @@
-"""Runtime knobs for the Track 2 caption agent (env-overridable)."""
+"""Runtime knobs (env-overridable). Defaults match the 0.92 scoring stack."""
 import os
-
-
-def _bool(name: str, default: str = "false") -> bool:
-    return os.environ.get(name, default).strip().lower() in {
-        "1", "true", "yes", "y", "on",
-    }
-
 
 FIREWORKS_API_KEY = (os.environ.get("FIREWORKS_API_KEY") or "").strip()
 FIREWORKS_BASE_URL = os.environ.get(
@@ -21,7 +14,7 @@ CAPTION_MODEL = os.environ.get(
 )
 REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "none")
 
-# Frame budget mirrors the 0.92 design: short/medium/long dynamic counts.
+# Dynamic frame budget: 3 / 5 / 6 (cap 6) — same as 0.92.
 FRAMES_LE_30S = int(os.environ.get("FRAMES_LE_30S", "3"))
 FRAMES_LE_60S = int(os.environ.get("FRAMES_LE_60S", "5"))
 FRAMES_GT_60S = int(os.environ.get("FRAMES_GT_60S", "6"))

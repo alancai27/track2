@@ -1,13 +1,12 @@
 # amd_track2 — Video Captioning Agent
 
-Fireworks MiniMax M3 grounds each clip (structured scene card → vision audit),
-then Kimi K2P6 writes the four required styles sequentially with a light
-keyword retry. Keyframes: 3–6 stills including open/close plus scene cuts,
-long-edge 1024px.
+MiniMax M3 grounds each clip (JSON brief → verify), then Kimi K2P6 writes
+four sequential styles with keyword retries. Keyframes: 3–6 stills with
+open/close + scene cuts @ 1024px long edge.
 
 ## Layout
 
-- `app/entrypoint.py` — seed results early, concurrent clips, always exit 0
+- `app/entrypoint.py` — concurrent clips, early results seed, always exit 0
 - `app/frames.py` — download + scene-aware keyframes
 - `app/vision.py` — two-pass visual grounding
 - `app/captions.py` — sequential styled captions
@@ -21,7 +20,12 @@ pip install -r requirements.txt
 ./run_examples.sh
 ```
 
+## Local score estimate
+
+```bash
+python eval/local_judge.py run --limit 3
+```
+
 ## Submit
 
-CI builds `linux/amd64` → `ghcr.io/alancai27/amd_track2:latest` with the
-baked `FIREWORKS_API_KEY` secret.
+CI builds `linux/amd64` → `ghcr.io/alancai27/amd_track2:latest`.
