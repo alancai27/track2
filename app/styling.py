@@ -23,15 +23,21 @@ STYLE_CANDIDATES = [
 STYLE_SPECS = {
     "formal": (
         "One polished, objective, professional sentence describing the scene. "
-        "Factual and precise. No opinion, no humor, no exclamation marks."
+        "Factual and precise. No opinion, no humor, no exclamation marks. "
+        "Write in grammatically correct, natural, polished English. Re-read "
+        "and ensure the sentence is fluent and error-free."
     ),
     "sarcastic": (
         "One dry, ironic caption that lightly mocks the scene while staying "
         "accurate to what's shown. Rotate among DIFFERENT sarcastic angles — "
         "fake enthusiasm, mock profundity, deadpan understatement, or ironic "
-        "praise — and vary the sentence structure. Do NOT default to openers "
-        "like 'oh great', 'how thrilling', or 'because the world was missing "
-        "that'; invent a fresh angle for this specific clip."
+        "praise — and vary the sentence structure. BANNED phrases (never use, "
+        "in any wording): 'just what the world needed', 'just what was "
+        "missing', 'oh great', 'how thrilling', 'because the world was "
+        "missing that', or close paraphrases of the same crutch. Invent a "
+        "genuinely different sarcastic angle for THIS specific clip. "
+        "Write in grammatically correct, natural, polished English. Re-read "
+        "and ensure the sentence is fluent and error-free."
     ),
     "humorous_tech": (
         "One genuinely funny caption that maps the scene onto a tech/"
@@ -41,11 +47,15 @@ STYLE_SPECS = {
         "race conditions, segfaults, unit tests, CI, kernels, etc. — and pick "
         "ONE fresh metaphor that fits THIS clip. Do NOT reuse 'deploy'/"
         "'deploying' (or near-synonyms like 'shipping to prod') as the joke; "
-        "clever and specific, not forced or formulaic."
+        "clever and specific, not forced or formulaic. "
+        "Write in grammatically correct, natural, polished English. Re-read "
+        "and ensure the sentence is fluent and error-free."
     ),
     "humorous_non_tech": (
         "One genuinely funny everyday caption — playful, relatable, warm. "
-        "Absolutely NO tech or programming references or jargon."
+        "Absolutely NO tech or programming references or jargon. "
+        "Write in grammatically correct, natural, polished English. Re-read "
+        "and ensure the sentence is fluent and error-free."
     ),
 }
 
